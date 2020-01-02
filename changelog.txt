@@ -1,3 +1,24 @@
+1.0.6 (2019-10-12)
+- Added RDP capability (#25)
+- Added MySQL capability (#76)
+- Fixed HPFeeds bug (#123)
+- Added basic password cracker
+- Various minor fixes and improvements  
+
+1.0.5 (2019-04-18)
+- Fixed asynssh issue (#111)
+
+1.0.4 (2019-04-13)
+- Added logging for auxiliary data for socks5, http and ssh (#85, #93, #95, #100) 
+- Added mysql capability (#95)
+- Various fixes
+
+1.0.3 (2018-11-20)
+- Get destination ip from socket (#88)
+
+1.0.2 (2018-09-10)
+- HPFeeds issue fixed (#86, #87)
+
 1.0.1 (2018-04-27)
 - Socks5 capability added (#72)
 - Added feature that allows pcap recording of session (Curiosum integration)

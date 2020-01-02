@@ -3,6 +3,7 @@
 .idea
 .idea/libraries
 .vscode
+.eggs
 
 # Packages
 *.egg
@@ -51,3 +52,6 @@ docs/_build
 admin_passwd_hash
 *.pem
 *.csv
+
+venv/*
+heralding/heralding.yml

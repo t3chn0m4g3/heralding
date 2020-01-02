@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 class Honeypot:
     public_ip = ''
+    wordlist = None
 
     def __init__(self, config, loop):
         """
@@ -59,18 +60,34 @@ class Honeypot:
                 logger.warning('Could not request public ip from ipify, error: %s', ex)
             await asyncio.sleep(3600)
 
+    def setup_wordlist(self):
+        # load wordlist in memory
+        wordlist_file = self.config['hash_cracker']['wordlist_file']
+        if not os.path.isfile(wordlist_file):
+            package_directory = os.path.dirname(os.path.abspath(heralding.__file__))
+            wordlist_file = os.path.join(package_directory, wordlist_file)
+            logger.warning('Using default wordlist file: "{0}", if you want to customize values please '
+                    'copy this file to the current working directory'.format(wordlist_file))
+        with open(wordlist_file, 'r') as f:
+            Honeypot.wordlist = f.read().splitlines()
+
     def start(self):
         """ Starts services. """
 
         if 'public_ip_as_destination_ip' in self.config and self.config['public_ip_as_destination_ip'] is True:
             asyncio.ensure_future(self._record_and_lookup_public_ip(), loop=self.loop)
 
+        # setup hash cracker's wordlist
+        if self.config['hash_cracker']['enabled']:
+            self.setup_wordlist()
+
         # start activity logging
         if 'activity_logging' in self.config:
             if 'file' in self.config['activity_logging'] and self.config['activity_logging']['file']['enabled']:
                 auth_log = self.config['activity_logging']['file']['authentication_log_file']
-                session_log = self.config['activity_logging']['file']['session_log_file']
-                file_logger = FileLogger(session_log, auth_log)
+                session_csv_log = self.config['activity_logging']['file']['session_csv_log_file']
+                session_json_log = self.config['activity_logging']['file']['session_json_log_file']
+                file_logger = FileLogger(session_csv_log, session_json_log, auth_log)
                 self.file_logger_task = self.loop.run_in_executor(None, file_logger.start)
                 self.file_logger_task.add_done_callback(common.on_unhandled_task_exception)
                 self._loggers.append(file_logger)
@@ -111,7 +128,6 @@ class Honeypot:
                 options = self.config['capabilities'][cap_name]
                 # capabilities are only allowed to append to the session list
                 cap = c(options, self.loop)
-
                 try:
                     # # Convention: All capability names which end in 's' will be wrapped in ssl.
                     if cap_name.endswith('s'):
@@ -136,6 +152,10 @@ class Honeypot:
                         server_coro = asyncssh.create_server(lambda: SshClass(ssh_options, self.loop),
                                                              bind_host, port, server_host_keys=[ssh_key_file],
                                                              login_timeout=cap.timeout, loop=self.loop)
+                    elif cap_name == 'rdp':
+                        pem_file = '{0}.pem'.format(cap_name)
+                        self.create_cert_if_not_exists(cap_name, pem_file)
+                        server_coro = asyncio.start_server(cap.handle_session, bind_host, port, loop=self.loop)
                     else:
                         server_coro = asyncio.start_server(cap.handle_session, bind_host, port, loop=self.loop)
 
@@ -145,15 +165,14 @@ class Honeypot:
                 except Exception as ex:
                     error_message = "Could not start {0} server on port {1}. Error: {2}".format(c.__name__, port, ex)
                     logger.error(error_message)
-                    self.loop.run_until_complete(common.cancel_all_pending_tasks(self.loop))
-                    sys.exit(error_message)
+                    raise ex
                 else:
                     logger.info('Started %s capability listening on port %s', c.__name__, port)
         ReportingRelay.logListenPorts(listen_ports)
 
     def stop(self):
         """Stops services"""
-        if self.config['capabilities']['ssh']['enabled']:
+        if self.config['capabilities']['ssh']['enabled'] and self.SshClass != None:
             for conn in self.SshClass.connections_list:
                 conn.close()
                 self.loop.run_until_complete(conn.wait_closed())

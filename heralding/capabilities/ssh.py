@@ -35,10 +35,13 @@ class SSH(asyncssh.SSHServer, HandlerBase):
     def connection_made(self, conn):
         SSH.connections_list.append(conn)
         self.address = conn.get_extra_info('peername')
+        self.dest_address = conn.get_extra_info('sockname')
+        self.connection = conn
         self.handle_connection()
         logger.debug('SSH connection received from %s.' % conn.get_extra_info('peername')[0])
 
     def connection_lost(self, exc):
+        self.session.set_auxiliary_data(self.get_auxiliary_data())
         self.close_session(self.session)
         if exc:
             logger.debug('SSH connection error: ' + str(exc))
@@ -62,7 +65,12 @@ class SSH(asyncssh.SSHServer, HandlerBase):
                 'Got {0} session on port {1} from {2}:{3}, but not handling it because the global session limit has '
                 'been reached'.format(protocol, self.port, *self.address))
         else:
-            self.session = self.create_session(self.address)
+            self.session = self.create_session(self.address, self.dest_address)
+
+    def get_auxiliary_data(self):
+        data_fields = ['client_version', 'recv_cipher', 'recv_mac', 'recv_compression']
+        data = {f: self.connection.get_extra_info(f) for f in data_fields}
+        return data
 
     @staticmethod
     def change_server_banner(banner):

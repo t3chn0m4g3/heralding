@@ -7,3 +7,5 @@ pyaml
 ipify
 pyzmq
 psycopg2
+hpfeeds3
+rsa

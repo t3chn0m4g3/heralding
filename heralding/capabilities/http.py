@@ -59,17 +59,25 @@ class HTTPHandler(AsyncBaseHTTPRequestHandler):
             hdr = self.headers['Authorization']
             _, enc_uname_pwd = hdr.split(' ')
             dec_uname_pwd = str(base64.b64decode(enc_uname_pwd), 'utf-8')
-            uname, pwd = dec_uname_pwd.split(':')
+            pos = dec_uname_pwd.find(':')
+            uname, pwd = dec_uname_pwd[:pos], dec_uname_pwd[pos+1:len(dec_uname_pwd)]
             self._session.add_auth_attempt('plaintext', username=uname, password=pwd)
             self.do_AUTHHEAD()
             headers_bytes = bytes(self.headers['Authorization'], 'utf-8')
             self.wfile.write(headers_bytes)
             self.wfile.write(b'not authenticated')
-
-    # Disable logging provided by BaseHTTPServer
+            aux_data = self.get_auxiliary_info()
+            self._session.set_auxiliary_data(aux_data)
+            # Disable logging provided by BaseHTTPServer
     def log_message(self, format_, *args):
         pass
 
+    def get_auxiliary_info(self):
+        data = {}
+        for field in self.headers.keys():
+            data.update({str(field) : str(self.headers[str(field)])})
+
+        return data
 
 class Http(HandlerBase):
     def __init__(self, options, loop):
