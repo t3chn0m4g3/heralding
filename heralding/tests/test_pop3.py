@@ -54,3 +54,22 @@ async def test_pop3_max_attempts_is_per_instance(serve, sink):
     two = Pop3(make_options(max_attempts=2, banner="+OK"))
     five = Pop3(make_options(max_attempts=5, banner="+OK"))
     assert (two.max_tries, five.max_tries) == (2, 5)
+
+
+async def test_pop3_noop_does_not_bypass_max_attempts(serve, sink):
+    cap = Pop3(make_options(max_attempts=2, banner="+OK"))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
+    await reader.readline()
+    writer.write(b"NOOP\r\n")
+    await writer.drain()
+    assert (await reader.readline()).startswith(b"+OK")
+    for _ in range(2):
+        writer.write(b"USER u\r\n")
+        await writer.drain()
+        await reader.readline()
+        writer.write(b"PASS p\r\n")
+        await writer.drain()
+        assert (await reader.readline()).startswith(b"-ERR")
+    assert await asyncio.wait_for(reader.read(), 5) == b""
+    writer.close()

@@ -62,7 +62,7 @@ class Pop3(HandlerBase):
                 func_to_call = getattr(self, f"cmd_{cmd}", None)
                 return_value = await func_to_call(session, reader, writer, msg)
                 # state changers!
-                if state == "AUTHORIZATION" or cmd == "quit":
+                if return_value is not None and (state == "AUTHORIZATION" or cmd == "quit"):
                     state = return_value
 
         session.end_session()
@@ -98,6 +98,7 @@ class Pop3(HandlerBase):
 
     async def cmd_noop(self, session, reader, writer, msg):
         await self.send_message(writer, "+OK")
+        return "AUTHORIZATION"
 
     async def cmd_quit(self, session, reader, writer, msg):
         await self.send_message(writer, "+OK Logging out")

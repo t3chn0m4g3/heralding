@@ -105,8 +105,9 @@ async def main_async(config, stop_event: asyncio.Event | None = None) -> None:
     honeypot = heralding.honeypot.Honeypot(config)
     try:
         await honeypot.start()
-    except Exception:
-        logger.exception("Could not start honeypot")
+    except Exception as exc:
+        logger.error("Could not start honeypot [%s] %s", type(exc).__name__, exc)
+        logger.debug("startup failure", exc_info=True)
         await honeypot.stop()
         raise SystemExit(1) from None
     drop_privileges(config.get("user", "nobody"), config.get("group", "nogroup"))
@@ -141,9 +142,14 @@ def main(argv=None) -> int:
         )
         return 2
 
-    hub = build_hub(config)
+    try:
+        hub = build_hub(config)
+        hub.start()
+    except Exception as exc:
+        logger.error("Could not open log sink [%s] %s", type(exc).__name__, exc)
+        logger.debug("sink startup failure", exc_info=True)
+        return 2
     set_hub(hub)
-    hub.start()
     try:
         asyncio.run(main_async(config))
     except SystemExit as ex:

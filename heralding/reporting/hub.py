@@ -58,14 +58,6 @@ class _SinkWorker(threading.Thread):
 
     def run(self) -> None:
         try:
-            self.sink.open()
-        except Exception as exc:
-            logger.warning(
-                "Sink %s failed to open [%s] %s", self.sink.name, type(exc).__name__, exc
-            )
-            logger.debug("open() failure", exc_info=True)
-            return
-        try:
             while True:
                 try:
                     kind, payload = self.queue.get(timeout=_QUEUE_POLL)
@@ -105,6 +97,10 @@ class ReportingHub:
         self._workers.append(_SinkWorker(sink, self._queue_size))
 
     def start(self) -> None:
+        """Open every sink on the calling thread (so a broken log path fails startup), then
+        start the worker threads."""
+        for w in self._workers:
+            w.sink.open()
         for w in self._workers:
             w.start()
         self._started = True

@@ -146,8 +146,14 @@ class Honeypot:
                 pass
 
         for server in self._servers:
-            server.close()
-            await server.wait_closed()
+            server.close()  # stop accepting
+        for server in self._servers:
+            server.close_clients()  # drop attackers still connected; sessions end normally
+        for server in self._servers:
+            try:
+                await asyncio.wait_for(server.wait_closed(), timeout=5)
+            except TimeoutError:
+                logger.debug("Server on %s did not close in time", server.sockets)
 
         await common.cancel_all_pending_tasks()
 

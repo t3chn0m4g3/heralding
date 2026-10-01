@@ -46,7 +46,8 @@ async def serve(sink) -> Callable[..., Awaitable[tuple[str, int]]]:
     yield _serve
     for server in servers:
         server.close()
-        await server.wait_closed()
+        server.close_clients()
+        await asyncio.wait_for(server.wait_closed(), 5)
 
 
 @pytest.fixture

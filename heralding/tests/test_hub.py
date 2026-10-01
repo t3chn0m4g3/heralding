@@ -150,3 +150,15 @@ def test_session_json_is_jsonl_with_contract_keys(tmp_path):
     event = json.loads(sess.read_text().splitlines()[0])
     assert event["session_ended"] is True
     assert event["auth_attempts"][0]["username"] == "u"
+
+
+def test_start_raises_when_a_sink_cannot_open(tmp_path):
+    hub = ReportingHub()
+    hub.add_sink(FileSink("", "", str(tmp_path / "missing-dir" / "auth.csv")))
+    try:
+        hub.start()
+    except OSError:
+        return
+    finally:
+        hub.stop()
+    raise AssertionError("hub.start() must fail when the primary log file cannot be opened")
