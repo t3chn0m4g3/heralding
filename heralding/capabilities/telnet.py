@@ -54,11 +54,15 @@ class TelnetWrapper(TelnetHandlerBase):
         super().__init__(reader, writer, address)
 
     async def authentication_ok(self):
+        try:
+            return await self._auth_loop()
+        except EOFError:
+            return False
+
+    async def _auth_loop(self):
         while self.auth_count < self.max_tries:
             username = await self.readline(prompt=b"Username: ", use_history=False)
             password = await self.readline(echo=False, prompt=b"Password: ", use_history=False)
-            if self.eof:
-                return False
             self.session.add_auth_attempt(
                 _type="plaintext",
                 username=decode_lossless(username),

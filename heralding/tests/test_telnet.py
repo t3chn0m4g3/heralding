@@ -125,3 +125,44 @@ async def test_max_attempts_is_per_capability_instance(serve, sink):
     assert b"Username: " in tail  # the Hydra-friendly final prompt
     writer.close()
     assert len(await asyncio.to_thread(sink.wait_for_auth, 2)) == 2
+
+
+async def test_client_disconnect_ends_session_promptly(serve, sink):
+    from heralding.capabilities.handlerbase import HandlerBase
+
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"u\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.write(b"p\r\n")
+    await writer.drain()
+    await asyncio.to_thread(sink.wait_for_auth, 1)
+    writer.close()
+    await writer.wait_closed()
+    for _ in range(40):  # must not wait for the 30 s session timeout
+        if HandlerBase.global_sessions == 0:
+            break
+        await asyncio.sleep(0.05)
+    assert HandlerBase.global_sessions == 0
+
+
+async def test_disconnect_at_password_prompt_ends_session(serve, sink):
+    from heralding.capabilities.handlerbase import HandlerBase
+
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"u\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.close()  # leave while the server waits for the password
+    await writer.wait_closed()
+    for _ in range(40):
+        if HandlerBase.global_sessions == 0:
+            break
+        await asyncio.sleep(0.05)
+    assert HandlerBase.global_sessions == 0

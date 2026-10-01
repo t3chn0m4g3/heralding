@@ -27,6 +27,7 @@ _WARN_INTERVAL = 60.0
 # Errors a hostile or broken client can trigger at will. They are logged at DEBUG only.
 _CLIENT_ERRORS = (
     ConnectionError,
+    EOFError,
     asyncio.IncompleteReadError,
     asyncio.LimitOverrunError,
     ssl.SSLError,

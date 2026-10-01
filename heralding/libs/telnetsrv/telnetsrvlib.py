@@ -318,8 +318,14 @@ class TelnetHandlerBase(AsyncBaseRequestHandler):
                 self._current_line = bytes(line)
 
     async def getc(self):
-        """Return one character from the input queue"""
-        return await self.cookedq.get()
+        """Return one character from the input queue; raise EOFError once the peer is gone."""
+        if self.eof and self.cookedq.empty():
+            raise EOFError
+        c = await self.cookedq.get()
+        if c is None:  # sentinel from the input cooker: connection closed
+            self.eof = True
+            raise EOFError
+        return c
 
     # --------------------------- Output Functions -----------------------------
 
@@ -423,8 +429,9 @@ class TelnetHandlerBase(AsyncBaseRequestHandler):
             pass
         finally:
             # wake up a readline() waiting on the queue so the session can end
+            self.eof = True
             try:
-                self.cookedq.put_nowait(4)  # Ctrl-D: readline returns QUIT / abort
+                self.cookedq.put_nowait(None)
             except asyncio.QueueFull:
                 pass
 
