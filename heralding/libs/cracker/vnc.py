@@ -1,7 +1,5 @@
 from Crypto.Cipher import DES
 
-import heralding
-
 
 def get_vnc_key(key):
     bit_flip = [
@@ -277,7 +275,7 @@ def get_vnc_key(key):
 def vnc_hash_check(challenge, response, vnc_key):
     """@param: all params in byte encoded
     @return: True if decrypted response matches with challenge"""
-    cipher = DES.new(vnc_key, DES.MODE_ECB)
+    cipher = DES.new(vnc_key, DES.MODE_ECB)  # noqa: S304 - DES is what the RFB protocol uses
     drs = cipher.decrypt(response)
     if drs == challenge:
         return True
@@ -285,13 +283,15 @@ def vnc_hash_check(challenge, response, vnc_key):
         return False
 
 
-def crack_hash(challenge, response):
-    # to overcome circular import
-    password_list = heralding.honeypot.Honeypot.wordlist
+def crack_hash(challenge, response, wordlist):
+    """Return the wordlist entry that produced `response` for `challenge`, or None.
 
-    if password_list:
-        for potential_password in password_list:
-            vnc_key = get_vnc_key(potential_password.encode("ascii"))
-            if vnc_hash_check(challenge, response, vnc_key):
-                return potential_password
+    CPU bound; callers run this in a thread (see capabilities/vnc.py).
+    """
+    if not wordlist or len(response) != 16 or len(challenge) != 16:
+        return None
+    for potential_password in wordlist:
+        vnc_key = get_vnc_key(potential_password.encode("utf-8", "replace"))
+        if vnc_hash_check(challenge, response, vnc_key):
+            return potential_password
     return None
