@@ -47,8 +47,13 @@ def set_fqdn(value: str, source: str = "config") -> None:
     """
     if source == "config":
         SMTPHandler._fqdn_pinned = bool(value)
+        SMTPHandler._fqdn_from_persona = False
         SMTPHandler.fqdn = value or ""
-    elif not SMTPHandler._fqdn_pinned:
+    elif source == "persona":
+        if not SMTPHandler._fqdn_pinned:
+            SMTPHandler._fqdn_from_persona = bool(value)
+            SMTPHandler.fqdn = value or ""
+    elif not SMTPHandler._fqdn_pinned and not SMTPHandler._fqdn_from_persona:
         SMTPHandler.fqdn = value or ""
 
 
@@ -61,6 +66,7 @@ def _b64decode(blob) -> bytes:
 class SMTPHandler(SMTP):
     fqdn = ""
     _fqdn_pinned = False
+    _fqdn_from_persona = False
 
     def __init__(self, reader, writer, session, options, banner="ESMTP", ehlo_hostname=None):
         self.banner = banner

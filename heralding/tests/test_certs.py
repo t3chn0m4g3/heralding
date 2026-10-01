@@ -86,3 +86,9 @@ def test_legacy_cert_without_marker_is_kept(tmp_path):
     certs.ensure_cert(str(p), {"common_name": "*"}, persona_tag="rhel-9")
     assert p.read_bytes() == b"legacy"
     assert (tmp_path / "imaps.pem.persona").read_text() == "rhel-9"
+
+
+def test_marker_is_the_fqdn_not_the_persona_name(tmp_path):
+    p = tmp_path / "https.pem"
+    certs.ensure_cert(str(p), {"common_name": "*"}, persona_tag="web-07.internal")
+    assert (tmp_path / "https.pem.persona").read_text() == "web-07.internal"

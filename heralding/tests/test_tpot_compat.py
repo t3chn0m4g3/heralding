@@ -105,3 +105,45 @@ def test_session_start_event_does_not_alias_live_lists(tmp_path):
     start_event = mem.sessions[0]
     assert start_event["session_ended"] is False
     assert start_event["auth_attempts"] == []  # a copy taken at emit time, not the live list
+
+
+async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch):
+    """Review focus 1: T-Pot's config (no persona key, mysql without protocol_specific_data)."""
+    from heralding.capabilities import smtp
+    from heralding.capabilities.handlerbase import HandlerBase
+    from heralding.honeypot import Honeypot
+    from heralding.reporting.memory_sink import MemorySink
+
+    monkeypatch.chdir(tmp_path)
+    config = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
+    config["public_ip_as_destination_ip"] = False
+    config["bind_host"] = "127.0.0.1"
+    for cap in config["capabilities"].values():
+        cap["port"] = 0
+    hub = ReportingHub()
+    hub.add_sink(MemorySink())
+    hub.start()
+    set_hub(hub)
+    honeypot = Honeypot(config)
+    try:
+        await honeypot.start()
+        assert len(honeypot._servers) == 16
+        assert HandlerBase.persona is not None
+        # CRAM-MD5 challenges use the persona FQDN, never the container's real host name
+        assert smtp.SMTPHandler.fqdn == HandlerBase.persona.fqdn
+        assert (tmp_path / "persona.state").exists()
+        assert (tmp_path / "https.pem.persona").read_text() == HandlerBase.persona.fqdn
+        # a second start in the same directory keeps the identity and the certificates
+        pem_before = (tmp_path / "https.pem").read_bytes()
+        identity = (HandlerBase.persona.name, HandlerBase.persona.hostname)
+        await honeypot.stop()
+        honeypot = Honeypot(config)
+        await honeypot.start()
+        assert (HandlerBase.persona.name, HandlerBase.persona.hostname) == identity
+        assert (tmp_path / "https.pem").read_bytes() == pem_before
+    finally:
+        await honeypot.stop()
+        HandlerBase.set_persona(None)
+        smtp.set_fqdn("", source="config")
+        hub.stop()
+        set_hub(None)

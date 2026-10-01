@@ -51,13 +51,27 @@ HTTP_401_BODY = (
 )
 
 
+def _is_iis_family(server_header: str, os_family: str | None) -> bool:
+    """Pick the error page style from the advertised server; fall back to the persona's OS."""
+    lowered = server_header.lower()
+    if "iis" in lowered or "microsoft" in lowered:
+        return True
+    if any(name in lowered for name in ("nginx", "apache", "lighttpd", "openresty", "caddy")):
+        return False
+    return (os_family or "windows") == "windows"
+
+
 class HTTPHandler(AsyncBaseHTTPRequestHandler):
     sys_version = ""  # never append "Python/x.y" to the Server header
 
     def __init__(self, reader, writer, httpsession, options, server_header=None, os_family=None):
         self.server_version = server_header or DEFAULT_SERVER_HEADER
-        template = ERROR_PAGE_IIS if (os_family or "windows") == "windows" else ERROR_PAGE_UNIX
-        self.error_message_format = template.replace("%(server)s", self.server_version)
+        template = (
+            ERROR_PAGE_IIS if _is_iis_family(self.server_version, os_family) else ERROR_PAGE_UNIX
+        )
+        self.error_message_format = template.replace(
+            "%(server)s", self.server_version.replace("%", "%%")
+        )
         self.error_content_type = "text/html"
         self._session = httpsession
         super().__init__(reader, writer, writer.get_extra_info("peername"))

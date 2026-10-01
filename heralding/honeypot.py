@@ -53,6 +53,8 @@ class Honeypot:
             await asyncio.sleep(1800)
 
     def _needs_fqdn_lookup(self) -> bool:
+        if self.persona is not None:
+            return False  # the persona owns the host name; never leak the real one
         for name in ("smtp", "smtps"):
             cfg = self.config["capabilities"].get(name) or {}
             if cfg.get("enabled") and not (cfg.get("protocol_specific_data") or {}).get("fqdn"):
@@ -96,8 +98,9 @@ class Honeypot:
         HandlerBase.configure_limits(
             self.config.get("max_sessions", 800), self.config.get("max_sessions_per_ip", 50)
         )
-        self.persona = persona.select_persona(self.config)
+        self.persona = persona.select_persona(self.config, state_path="persona.state")
         HandlerBase.set_persona(self.persona)
+        smtp.set_fqdn(self.persona.fqdn, source="persona")
         logger.info("Persona: %s (%s)", self.persona.name, self.persona.fqdn)
 
         if self.config.get("public_ip_as_destination_ip") is True:
@@ -124,7 +127,7 @@ class Honeypot:
                 pem_file = certs.ensure_cert(
                     f"{cap_name}.pem",
                     self._cert_subject(psd.get("cert")),
-                    persona_tag=self.persona.name,
+                    persona_tag=self.persona.fqdn,
                 )
                 if cls.TLS == "implicit":
                     min_version = psd.get("tls_min_version") or self.config.get(

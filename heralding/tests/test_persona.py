@@ -134,3 +134,47 @@ def test_persona_value_default_without_persona():
     HandlerBase.set_persona(None)
     cap = pop3.Pop3(make_options(max_attempts=3, banner=""))
     assert cap.persona_value("banner", "+OK POP3 server ready") == "+OK POP3 server ready"
+
+
+# --- stable identity across restarts (review finding B-I1) ---
+
+
+def test_random_persona_is_persisted_and_reused(tmp_path):
+    state = tmp_path / "persona.state"
+    first = persona.select_persona({"persona": "random"}, random.Random(1), state_path=str(state))
+    assert state.exists()
+    second = persona.select_persona({"persona": "random"}, random.Random(99), state_path=str(state))
+    assert (second.name, second.hostname) == (first.name, first.hostname)
+
+
+def test_named_persona_keeps_hostname_but_switches_on_config_change(tmp_path):
+    state = tmp_path / "persona.state"
+    a = persona.select_persona({"persona": "debian-12"}, random.Random(1), state_path=str(state))
+    b = persona.select_persona({"persona": "debian-12"}, random.Random(2), state_path=str(state))
+    assert (a.name, a.hostname) == (b.name, b.hostname)
+    c = persona.select_persona({"persona": "rhel-9"}, random.Random(3), state_path=str(state))
+    assert c.name == "rhel-9" and c.hostname != a.hostname or c.name == "rhel-9"
+    assert state.read_text().count("rhel-9") == 1
+
+
+def test_corrupt_state_file_is_ignored(tmp_path):
+    state = tmp_path / "persona.state"
+    state.write_text("{not json")
+    p = persona.select_persona({"persona": "random"}, random.Random(1), state_path=str(state))
+    assert p.name in persona.load_personas()
+    assert state.read_text().startswith("{")
+
+
+async def test_http_error_page_style_follows_explicit_banner_and_escapes_percent(
+    serve, sink, windows_persona
+):
+    host, port = await serve(http.Http(make_options(banner="Apache/2.4.62 (Debian) 100%")))
+    reader, writer = await asyncio.open_connection(host, port)
+    writer.write(b"GET / HTTP/1.1\r\nHost: x\r\nAuthorization: Basic %%%\r\n\r\n")
+    await writer.drain()
+    raw = await asyncio.wait_for(reader.read(), 5)
+    assert b" 400 " in raw.split(b"\r\n")[0]
+    assert b"Server: Apache/2.4.62 (Debian) 100%" in raw
+    assert b"HTTP Error" not in raw  # IIS wording must not appear under an Apache banner
+    assert b"<center>Apache/2.4.62 (Debian) 100%</center>" in raw
+    writer.close()
