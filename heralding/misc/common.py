@@ -32,19 +32,13 @@ def on_unhandled_task_exception(task):
             os._exit(1)
 
 
-async def cancel_all_pending_tasks(loop=None):
-    if loop is None:
-        loop = asyncio.get_event_loop()
-    pending = asyncio.all_tasks(loop=loop)
-    pending.remove(asyncio.current_task(loop=loop))
+async def cancel_all_pending_tasks(grace_seconds: float = 5.0) -> None:
+    current = asyncio.current_task()
+    pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
     for task in pending:
-        # We give task only 1 second to die.
-        if not task.done():
-            task.cancel()
-            try:
-                await asyncio.wait_for(task, timeout=5)
-            except asyncio.CancelledError, KeyboardInterrupt, ConnectionResetError:
-                pass
+        task.cancel()
+    if pending:
+        await asyncio.wait(pending, timeout=grace_seconds)
 
 
 def generate_self_signed_cert(

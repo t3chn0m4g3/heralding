@@ -16,7 +16,7 @@
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import heralding.honeypot
 from heralding.reporting.reporting_relay import ReportingRelay
@@ -38,7 +38,7 @@ class Session:
         else:
             self.destination_ip = destination_ip
         self.destination_port = destination_port
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.now(UTC)
         self.num_ = 0
         self.session_ended = False
         # protocol specific data
@@ -51,7 +51,7 @@ class Session:
 
         self.auth_attempts = []
 
-        self.last_activity = datetime.utcnow()
+        self.last_activity = datetime.now(UTC)
         self.log_start_session()
 
     def log_start_session(self):
@@ -59,7 +59,7 @@ class Session:
         ReportingRelay.logSessionInfo(entry)
 
     def activity(self):
-        self.last_activity = datetime.utcnow()
+        self.last_activity = datetime.now(UTC)
 
     def is_connected(self):
         return self.connected
@@ -74,7 +74,7 @@ class Session:
 
         # constructs dict to transmitted right away.
         entry = {
-            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f"),
+            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f"),
             "session_id": str(self.id),
             "auth_id": str(uuid.uuid4()),
             "source_ip": self.source_ip,
@@ -118,7 +118,7 @@ class Session:
     def get_session_info(self, session_ended):
         entry = {
             "timestamp": self.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f"),
-            "duration": int((datetime.utcnow() - self.timestamp).total_seconds()),
+            "duration": int((datetime.now(UTC) - self.timestamp).total_seconds()),
             "session_id": str(self.id),
             "source_ip": self.source_ip,
             "source_port": self.source_port,

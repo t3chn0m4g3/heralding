@@ -20,7 +20,8 @@ import logging
 import logging.handlers
 import os
 import pwd
-import sys
+import signal
+import threading
 from argparse import ArgumentParser
 
 import yaml
@@ -28,7 +29,6 @@ import yaml
 import heralding
 import heralding.honeypot
 import heralding.reporting.reporting_relay
-from heralding.misc.common import on_unhandled_task_exception
 
 logger = logging.getLogger()
 
@@ -86,11 +86,6 @@ class LogFilter(logging.Filter):
             return True
 
 
-def break_if_python_not_supported():
-    if sys.version_info[0:2] < (3, 7):
-        raise Exception("Wrong python version! Your Python interpreter must be 3.6.0 or above!")
-
-
 def drop_privileges(uid_name="nobody", gid_name="nogroup"):
     """Drops current privileges to the privileges of selected user."""
     if os.getuid() != 0:
@@ -105,11 +100,41 @@ def drop_privileges(uid_name="nobody", gid_name="nogroup"):
     new_uid_name = pwd.getpwuid(os.getuid())[0]
     new_gid_name = grp.getgrgid(os.getgid())[0]
 
-    logger.info(f"Privileges dropped, running as {new_uid_name}/{new_gid_name}.")
+    logger.info("Privileges dropped, running as %s/%s.", new_uid_name, new_gid_name)
 
 
-def main():
-    break_if_python_not_supported()
+def load_config(config_file):
+    if not os.path.isfile(config_file):
+        package_directory = os.path.dirname(os.path.abspath(heralding.__file__))
+        config_file = os.path.join(package_directory, config_file)
+        logger.warning(
+            'Using default config file: "%s", if you want to customize values please '
+            "copy this file to the current working directory",
+            config_file,
+        )
+    with open(config_file) as _file:
+        return yaml.safe_load(_file.read())
+
+
+async def main_async(config, stop_event: asyncio.Event | None = None) -> None:
+    loop = asyncio.get_running_loop()
+    stop_event = stop_event or asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+    honeypot = heralding.honeypot.Honeypot(config)
+    try:
+        await honeypot.start()
+    except Exception:
+        logger.exception("Could not start honeypot")
+        await honeypot.stop()
+        raise SystemExit(1) from None
+    drop_privileges()
+    await stop_event.wait()
+    logger.info("Shutdown requested")
+    await honeypot.stop()
+
+
+def main(argv=None) -> int:
     parser = ArgumentParser(description="Heralding")
 
     parser.add_argument(
@@ -121,60 +146,30 @@ def main():
     parser.add_argument(
         "-c", "--config", dest="config", default="heralding.yml", help="Heralding config file"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     setup_logging(args.logfile, args.verbose)
 
-    logger.info(f"Initializing Heralding version {heralding.version}")
-
-    config_file = args.config
-    if not os.path.isfile(config_file):
-        package_directory = os.path.dirname(os.path.abspath(heralding.__file__))
-        config_file = os.path.join(package_directory, config_file)
-        logger.warning(
-            f'Using default config file: "{config_file}", if you want to customize values please '
-            "copy this file to the current working directory"
-        )
+    logger.info("Initializing Heralding version %s", heralding.version)
 
     try:
-        with open(config_file) as _file:
-            config = yaml.safe_load(_file.read())
+        config = load_config(args.config)
     except Exception as ex:
-        error_message = f"Error while reading config file {config_file}: {ex}."
-        logger.error(error_message)
-        sys.exit(error_message)
+        logger.error("Error while reading config file %s [%s] %s", args.config, type(ex).__name__, ex)
+        return 2
 
-    loop = asyncio.get_event_loop()
-    # startup reporting relay
-    reporting_relay = heralding.reporting.reporting_relay.ReportingRelay()
-    reporting_relay_task = loop.run_in_executor(None, reporting_relay.start)
-    reporting_relay_task.add_done_callback(on_unhandled_task_exception)
-
-    honeypot = heralding.honeypot.Honeypot(config, loop)
+    relay = heralding.reporting.reporting_relay.ReportingRelay()
+    relay_thread = threading.Thread(target=relay.start, name="reporting-relay", daemon=True)
+    relay_thread.start()
     try:
-        honeypot.start()
-    except Exception as ex:
-        logger.exception(ex)
-        honeypot.stop()
-        reporting_relay.stop()
-        # We give reporting_relay a chance to be finished.
-        loop.run_until_complete(asyncio.sleep(0.5))
-        loop.close()
-        sys.exit(ex)
-
-    drop_privileges()
-
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        pass
+        asyncio.run(main_async(config))
+    except SystemExit as ex:
+        return int(ex.code or 1)
     finally:
-        honeypot.stop()
-        reporting_relay.stop()
-        # We give reporting_relay a chance to be finished.
-        loop.run_until_complete(asyncio.sleep(0.5))
-        loop.close()
+        relay.stop()
+        relay_thread.join(timeout=5)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

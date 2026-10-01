@@ -35,21 +35,22 @@ class Honeypot:
     public_ip = ""
     wordlist = None
 
-    def __init__(self, config, loop):
+    def __init__(self, config):
         """
         :param config: configuration dictionary.
         """
         assert config is not None
-        self.loop = loop
         self.SshClass = None
         self.config = config
         self._servers = []
         self._loggers = []
+        self._logger_futures = []
+        self.public_ip_task = None
 
     async def _record_and_lookup_public_ip(self):
         while True:
             try:
-                Honeypot.public_ip = common.get_public_ip()
+                Honeypot.public_ip = await asyncio.to_thread(common.get_public_ip)
                 logger.warning("Found public ip: %s", Honeypot.public_ip)
             except Exception as ex:
                 Honeypot.public_ip = ""
@@ -69,144 +70,134 @@ class Honeypot:
         with open(wordlist_file) as f:
             Honeypot.wordlist = f.read().splitlines()
 
-    def start(self):
+    def _start_logger(self, instance):
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, instance.start)
+        future.add_done_callback(common.on_unhandled_task_exception)
+        self._logger_futures.append(future)
+        self._loggers.append(instance)
+
+    async def start(self):
         """Starts services."""
 
-        if (
-            "public_ip_as_destination_ip" in self.config
-            and self.config["public_ip_as_destination_ip"] is True
-        ):
-            asyncio.ensure_future(self._record_and_lookup_public_ip())
+        if self.config.get("public_ip_as_destination_ip") is True:
+            self.public_ip_task = asyncio.create_task(self._record_and_lookup_public_ip())
 
         # setup hash cracker's wordlist
         if self.config["hash_cracker"]["enabled"]:
             self.setup_wordlist()
 
         # start activity logging
-        if "activity_logging" in self.config:
-            if (
-                "file" in self.config["activity_logging"]
-                and self.config["activity_logging"]["file"]["enabled"]
-            ):
-                auth_log = self.config["activity_logging"]["file"]["authentication_log_file"]
-                session_csv_log = self.config["activity_logging"]["file"]["session_csv_log_file"]
-                session_json_log = self.config["activity_logging"]["file"]["session_json_log_file"]
-                file_logger = FileLogger(session_csv_log, session_json_log, auth_log)
-                self.file_logger_task = self.loop.run_in_executor(None, file_logger.start)
-                self.file_logger_task.add_done_callback(common.on_unhandled_task_exception)
-                self._loggers.append(file_logger)
-
-            if (
-                "syslog" in self.config["activity_logging"]
-                and self.config["activity_logging"]["syslog"]["enabled"]
-            ):
-                sys_logger = SyslogLogger()
-                self.sys_logger_task = self.loop.run_in_executor(None, sys_logger.start)
-                self.sys_logger_task.add_done_callback(common.on_unhandled_task_exception)
-                self._loggers.append(sys_logger)
-
-            if (
-                "hpfeeds" in self.config["activity_logging"]
-                and self.config["activity_logging"]["hpfeeds"]["enabled"]
-            ):
-                session_channel = self.config["activity_logging"]["hpfeeds"]["session_channel"]
-                auth_channel = self.config["activity_logging"]["hpfeeds"]["auth_channel"]
-                host = self.config["activity_logging"]["hpfeeds"]["host"]
-                port = self.config["activity_logging"]["hpfeeds"]["port"]
-                ident = self.config["activity_logging"]["hpfeeds"]["ident"]
-                secret = self.config["activity_logging"]["hpfeeds"]["secret"]
-                hpfeeds_logger = HpFeedsLogger(
-                    session_channel, auth_channel, host, port, ident, secret
+        activity = self.config.get("activity_logging") or {}
+        if activity.get("file", {}).get("enabled"):
+            file_cfg = activity["file"]
+            self._start_logger(
+                FileLogger(
+                    file_cfg["session_csv_log_file"],
+                    file_cfg["session_json_log_file"],
+                    file_cfg["authentication_log_file"],
                 )
-                self.hpfeeds_logger_task = self.loop.run_in_executor(None, hpfeeds_logger.start)
-                self.hpfeeds_logger_task.add_done_callback(common.on_unhandled_task_exception)
-
-            if (
-                "curiosum" in self.config["activity_logging"]
-                and self.config["activity_logging"]["curiosum"]["enabled"]
-            ):
-                port = self.config["activity_logging"]["curiosum"]["port"]
-                curiosum_integration = CuriosumIntegration(port)
-                self.hpfeeds_logger_task = self.loop.run_in_executor(
-                    None, curiosum_integration.start
+            )
+        if activity.get("syslog", {}).get("enabled"):
+            self._start_logger(SyslogLogger())
+        if activity.get("hpfeeds", {}).get("enabled"):
+            hp = activity["hpfeeds"]
+            self._start_logger(
+                HpFeedsLogger(
+                    hp["session_channel"],
+                    hp["auth_channel"],
+                    hp["host"],
+                    hp["port"],
+                    hp["ident"],
+                    hp["secret"],
                 )
-                self.hpfeeds_logger_task.add_done_callback(common.on_unhandled_task_exception)
+            )
+        if activity.get("curiosum", {}).get("enabled"):
+            self._start_logger(CuriosumIntegration(activity["curiosum"]["port"]))
 
         bind_host = self.config["bind_host"]
         listen_ports = []
         for c in heralding.capabilities.handlerbase.HandlerBase.__subclasses__():
             cap_name = c.__name__.lower()
-            if cap_name in self.config["capabilities"]:
-                if not self.config["capabilities"][cap_name]["enabled"]:
-                    continue
-                port = self.config["capabilities"][cap_name]["port"]
-                listen_ports.append(port)
-                # carve out the options for this specific service
-                options = self.config["capabilities"][cap_name]
-                # capabilities are only allowed to append to the session list
-                cap = c(options)
-                try:
-                    # # Convention: All capability names which end in 's' will be wrapped in ssl.
-                    if cap_name.endswith("s"):
-                        pem_file = f"{cap_name}.pem"
-                        self.create_cert_if_not_exists(cap_name, pem_file)
-                        ssl_context = self.create_ssl_context(pem_file)
-                        server_coro = asyncio.start_server(
-                            cap.handle_session, bind_host, port, ssl=ssl_context
-                        )
-                    elif cap_name == "ssh":
-                        # Since dicts and user-defined classes are mutable, we have
-                        # to save ssh class and ssh options somewhere.
-                        ssh_options = options
-                        SshClass = c
-                        self.SshClass = SshClass
+            if cap_name not in self.config["capabilities"]:
+                continue
+            if not self.config["capabilities"][cap_name]["enabled"]:
+                continue
+            port = self.config["capabilities"][cap_name]["port"]
+            listen_ports.append(port)
+            # carve out the options for this specific service
+            options = self.config["capabilities"][cap_name]
+            # capabilities are only allowed to append to the session list
+            cap = c(options)
+            try:
+                # Convention: All capability names which end in 's' will be wrapped in ssl.
+                if cap_name.endswith("s"):
+                    pem_file = f"{cap_name}.pem"
+                    self.create_cert_if_not_exists(cap_name, pem_file)
+                    ssl_context = self.create_ssl_context(pem_file)
+                    server = await asyncio.start_server(
+                        cap.handle_session, bind_host, port, ssl=ssl_context
+                    )
+                elif cap_name == "ssh":
+                    # Since dicts and user-defined classes are mutable, we have
+                    # to save ssh class and ssh options somewhere.
+                    ssh_options = options
+                    SshClass = c
+                    self.SshClass = SshClass
 
-                        ssh_key_file = "ssh.key"
-                        SshClass.generate_ssh_key(ssh_key_file)
+                    ssh_key_file = "ssh.key"
+                    SshClass.generate_ssh_key(ssh_key_file)
 
-                        banner = ssh_options["protocol_specific_data"]["banner"]
-                        SshClass.change_server_banner(banner)
+                    banner = ssh_options["protocol_specific_data"]["banner"]
+                    SshClass.change_server_banner(banner)
 
-                        server_coro = asyncssh.create_server(
-                            lambda: SshClass(ssh_options),
-                            bind_host,
-                            port,
-                            server_host_keys=[ssh_key_file],
-                            login_timeout=cap.timeout,
-                        )
-                    elif cap_name == "rdp":
-                        pem_file = f"{cap_name}.pem"
-                        self.create_cert_if_not_exists(cap_name, pem_file)
-                        server_coro = asyncio.start_server(cap.handle_session, bind_host, port)
-                    else:
-                        server_coro = asyncio.start_server(cap.handle_session, bind_host, port)
-
-                    server = self.loop.run_until_complete(server_coro)
-                    logger.debug("Adding %s capability with options: %s", cap_name, options)
-                    self._servers.append(server)
-                except Exception as ex:
-                    error_message = f"Could not start {c.__name__} server on port {port}. Error: {ex}"
-                    logger.error(error_message)
-                    raise ex
+                    server = await asyncssh.create_server(
+                        lambda: SshClass(ssh_options),  # noqa: B023
+                        bind_host,
+                        port,
+                        server_host_keys=[ssh_key_file],
+                        login_timeout=cap.timeout,
+                    )
+                elif cap_name == "rdp":
+                    pem_file = f"{cap_name}.pem"
+                    self.create_cert_if_not_exists(cap_name, pem_file)
+                    server = await asyncio.start_server(cap.handle_session, bind_host, port)
                 else:
-                    logger.info("Started %s capability listening on port %s", c.__name__, port)
+                    server = await asyncio.start_server(cap.handle_session, bind_host, port)
+
+                logger.debug("Adding %s capability with options: %s", cap_name, options)
+                self._servers.append(server)
+            except Exception as ex:
+                logger.error(
+                    "Could not start %s server on port %s [%s] %s",
+                    c.__name__,
+                    port,
+                    type(ex).__name__,
+                    ex,
+                )
+                raise
+            else:
+                logger.info("Started %s capability listening on port %s", c.__name__, port)
         ReportingRelay.logListenPorts(listen_ports)
 
-    def stop(self):
+    async def stop(self):
         """Stops services"""
-        if self.config["capabilities"]["ssh"]["enabled"] and self.SshClass != None:
-            for conn in self.SshClass.connections_list:
+        if self.public_ip_task is not None:
+            self.public_ip_task.cancel()
+
+        if self.SshClass is not None:
+            for conn in list(self.SshClass.connections_list):
                 conn.close()
-                self.loop.run_until_complete(conn.wait_closed())
+                await conn.wait_closed()
 
         for server in self._servers:
             server.close()
-            self.loop.run_until_complete(server.wait_closed())
+            await server.wait_closed()
 
-        for l in self._loggers:
-            l.stop()
+        for lg in self._loggers:
+            lg.stop()
 
-        self.loop.run_until_complete(common.cancel_all_pending_tasks(self.loop))
+        await common.cancel_all_pending_tasks()
 
         logger.info("All tasks were stopped.")
 
