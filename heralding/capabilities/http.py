@@ -1,4 +1,4 @@
-# Copyright (C) 2013 Aniket Panse <contact@aniketpanse.in>
+# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,64 +20,73 @@
 # and such derivative works.
 
 import base64
+import binascii
 import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.libs.http.aioserver import AsyncBaseHTTPRequestHandler
+from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SERVER_HEADER = "Microsoft-IIS/10.0"
+
+HTTP_401_BODY = (
+    b"<!DOCTYPE html><html><head><title>401 Unauthorized</title></head>"
+    b"<body><h1>Unauthorized</h1><p>This server could not verify that you are authorized "
+    b"to access the document requested.</p></body></html>"
+)
+
 
 class HTTPHandler(AsyncBaseHTTPRequestHandler):
+    sys_version = ""  # never append "Python/x.y" to the Server header
+
     def __init__(self, reader, writer, httpsession, options):
-        self._options = options
-        if "banner" in self._options:
-            self._banner = self._options["banner"]
-        else:
-            self._banner = "Microsoft-IIS/5.0"
+        psd = options.get("protocol_specific_data") or {}
+        self.server_version = psd.get("banner") or DEFAULT_SERVER_HEADER
         self._session = httpsession
-        address = writer.get_extra_info("address")
-        super().__init__(reader, writer, address)
+        super().__init__(reader, writer, writer.get_extra_info("peername"))
 
-    def do_HEAD(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
+    def version_string(self):
+        return self.server_version
 
-    def do_AUTHHEAD(self):
+    def _send_401(self):
         self.send_response(401)
-        # TODO: Value for basic realm...
-        self.send_header("WWW-Authenticate", 'Basic realm=""')
-        self.send_header("Content-type", "text/html")
+        self.send_header("WWW-Authenticate", 'Basic realm="Restricted"')
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(HTTP_401_BODY)))
+        self.send_header("Connection", "close")
         self.end_headers()
+        self.wfile.write(HTTP_401_BODY)
+        self.close_connection = True
 
-    def do_GET(self):
-        if self.headers["Authorization"] is None:
-            self.do_AUTHHEAD()
-        else:
-            hdr = self.headers["Authorization"]
-            _, enc_uname_pwd = hdr.split(" ")
-            dec_uname_pwd = str(base64.b64decode(enc_uname_pwd), "utf-8")
-            pos = dec_uname_pwd.find(":")
-            uname, pwd = dec_uname_pwd[:pos], dec_uname_pwd[pos + 1 : len(dec_uname_pwd)]
-            self._session.add_auth_attempt("plaintext", username=uname, password=pwd)
-            self.do_AUTHHEAD()
-            headers_bytes = bytes(self.headers["Authorization"], "utf-8")
-            self.wfile.write(headers_bytes)
-            self.wfile.write(b"not authenticated")
-            aux_data = self.get_auxiliary_info()
-            self._session.set_auxiliary_data(aux_data)
-            # Disable logging provided by BaseHTTPServer
+    def _handle_auth(self):
+        self._session.set_auxiliary_data(self.get_auxiliary_info())
+        header = self.headers.get("Authorization")
+        if header is None:
+            self._send_401()
+            return
+        scheme, _, blob = header.strip().partition(" ")
+        if scheme.lower() != "basic" or not blob:
+            self.send_error(400, "Bad Request")
+            return
+        try:
+            decoded = decode_lossless(base64.b64decode(blob.strip(), validate=True))
+        except binascii.Error, ValueError:
+            self.send_error(400, "Bad Request")
+            return
+        username, _, password = decoded.partition(":")
+        self._session.add_auth_attempt("plaintext", username=username, password=password)
+        self._send_401()
 
+    do_GET = do_POST = do_PUT = do_HEAD = do_OPTIONS = do_DELETE = do_PATCH = _handle_auth
+
+    # Disable logging provided by BaseHTTPServer
     def log_message(self, format_, *args):
         pass
 
     def get_auxiliary_info(self):
-        data = {}
-        for field in self.headers.keys():
-            data.update({str(field): str(self.headers[str(field)])})
-
-        return data
+        return {str(field): str(self.headers[str(field)]) for field in self.headers.keys()}
 
 
 class Http(HandlerBase):
