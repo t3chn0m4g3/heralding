@@ -39,6 +39,25 @@ Starting the honeypot
    2019-04-14 13:10:11,947 (heralding.honeypot) Started Imaps capability listening on port 993
 
 
+Persona
+-------
+
+At start-up Heralding picks a *persona*, a coherent set of banners, server versions, host and
+domain names and certificate subjects (``heralding/personas.yml``: ``ubuntu-24.04``, ``debian-12``,
+``rhel-9``, ``windows-server-2019``, ``windows-server-2022``). The config key ``persona`` selects one
+(``random`` is the default) and the choice is logged::
+
+  Persona: ubuntu-24.04 (web-75.internal)
+
+Any banner, version or certificate field set explicitly in ``heralding.yml`` overrides the persona
+for that capability, so a fixed configuration (like T-Pot's) behaves exactly as before.
+
+IPv6
+----
+
+``bind_host`` accepts a list, e.g. ``["0.0.0.0", "::"]``. Addresses are logged without the
+``::ffff:`` prefix of IPv4-mapped IPv6 sockets.
+
 Viewing the collected data
 --------------------------
 
@@ -46,7 +65,7 @@ Heralding logs relevant data in three files, log_session.json, log_auth.csv and 
 
 **log_session.json**
 
-This log file contains all available information for a given activity to the honeypot. This included timestamp, authentication attempts and protocol specific information (auxiliary data) - and a bunch of other information. Be aware that the log entry for a specific session will appear in the log file **after** the session has ended. The format is jsonlines.
+This log file contains all available information for a given activity to the honeypot. ``auxiliary_data`` holds protocol specific details: the client's command lines for ftp, imap, pop3 and telnet (``commands``, at most 50, ``commands_truncated`` when cut), SSH public keys offered (``publickey_attempts`` with type and SHA-256 fingerprint), HTTP request headers, SOCKS5 auth methods and RDP domain/TLS version. This included timestamp, authentication attempts and protocol specific information (auxiliary data) - and a bunch of other information. Be aware that the log entry for a specific session will appear in the log file **after** the session has ended. The format is jsonlines.
 
 .. code-block:: json
 
