@@ -16,11 +16,12 @@
 import asyncio
 import logging
 import os
+import socket
 import ssl
 
 import heralding.capabilities  # noqa: F401  registers all capabilities
 import heralding.misc.common as common
-from heralding.capabilities import ssh
+from heralding.capabilities import smtp, ssh
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.reporting.hub import get_hub
 
@@ -39,6 +40,22 @@ class Honeypot:
         self.config = config
         self._servers = []
         self.public_ip_task = None
+        self._fqdn_task = None
+
+    async def _refresh_fqdn(self):
+        while True:
+            try:
+                smtp.set_fqdn(await asyncio.to_thread(socket.getfqdn))
+            except Exception as exc:
+                logger.debug("getfqdn failed [%s] %s", type(exc).__name__, exc)
+            await asyncio.sleep(1800)
+
+    def _needs_fqdn_lookup(self) -> bool:
+        for name in ("smtp", "smtps"):
+            cfg = self.config["capabilities"].get(name) or {}
+            if cfg.get("enabled") and not (cfg.get("protocol_specific_data") or {}).get("fqdn"):
+                return True
+        return False
 
     async def _record_and_lookup_public_ip(self):
         while True:
@@ -72,6 +89,9 @@ class Honeypot:
 
         if self.config.get("public_ip_as_destination_ip") is True:
             self.public_ip_task = asyncio.create_task(self._record_and_lookup_public_ip())
+
+        if self._needs_fqdn_lookup():
+            self._fqdn_task = asyncio.create_task(self._refresh_fqdn())
 
         # setup hash cracker's wordlist
         if self.config["hash_cracker"]["enabled"]:
@@ -110,8 +130,9 @@ class Honeypot:
 
     async def stop(self):
         """Stops services"""
-        if self.public_ip_task is not None:
-            self.public_ip_task.cancel()
+        for task in (self.public_ip_task, self._fqdn_task):
+            if task is not None:
+                task.cancel()
 
         for conn in list(ssh.SSH.connections_list):
             conn.close()
