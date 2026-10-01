@@ -55,3 +55,73 @@ async def test_invalid_login(serve, sink):
     attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
     assert (attempts[0]["username"], attempts[0]["password"]) == ("someuser", "somepass")
     writer.close()
+
+
+async def test_overlong_line_is_truncated_not_fatal(serve, sink, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"A" * 5000 + b"\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.write(b"p\r\n")
+    await writer.drain()
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert len(attempt["username"]) == 1024
+    writer.close()
+    await asyncio.sleep(0.3)
+    # no asyncio "socket.send() raised exception." spam after the client is gone
+    assert sum("socket.send()" in rec.getMessage() for rec in caplog.records) == 0
+
+
+async def test_prompts_match_tpot_smoke(serve, sink):
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
+    data = await _read_until(reader, writer, b"sername:")
+    assert b"username:" in data.lower()
+    writer.write(b"u\r\n")
+    await writer.drain()
+    data = await _read_until(reader, writer, b"assword:")
+    assert b"password:" in data.lower()
+    writer.close()
+
+
+async def test_latin1_password_is_logged(serve, sink):
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"u\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.write(b"p\xe4\r\n")
+    await writer.drain()
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["password"] == "p\\xe4"
+    writer.close()
+
+
+async def test_max_attempts_is_per_capability_instance(serve, sink):
+    cap_two = telnet.Telnet(make_options(max_attempts=2))
+    cap_five = telnet.Telnet(make_options(max_attempts=5))
+    assert cap_two.max_tries == 2
+    assert cap_five.max_tries == 5
+    host, port = await serve(cap_two)
+    reader, writer = await asyncio.open_connection(host, port)
+    for i in range(2):
+        await _read_until(reader, writer, b"Username: ")
+        writer.write(f"u{i}\r\n".encode())
+        await writer.drain()
+        await _read_until(reader, writer, b"Password: ")
+        writer.write(b"p\r\n")
+        await writer.drain()
+    # after max_attempts the server closes the connection
+    tail = await asyncio.wait_for(reader.read(), 5)
+    assert b"Username: " in tail  # the Hydra-friendly final prompt
+    writer.close()
+    assert len(await asyncio.to_thread(sink.wait_for_auth, 2)) == 2
