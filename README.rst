@@ -1,10 +1,6 @@
-Heralding |travis badge| |version badge| |codacy badge|
-=======================================================
+Heralding |version badge|
+=========================
 
-.. |travis badge| image:: https://img.shields.io/travis/johnnykv/heralding/master.svg
-   :target: https://travis-ci.org/johnnykv/heralding
-.. |codacy badge| image:: https://api.codacy.com/project/badge/Grade/e9419eb118dc4741ae230aa6bcc8a015
-   :target: https://www.codacy.com/app/johnnykv/heralding?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=johnnykv/heralding&amp;utm_campaign=Badge_Grade
 .. |version badge| image:: https://img.shields.io/pypi/v/heralding.svg
    :target: https://pypi.python.org/pypi/Heralding/
    
@@ -13,9 +9,9 @@ About
 -----
 
 Sometimes you just want a simple honeypot that collects credentials, nothing more. Heralding is that honeypot!
-Currently the following protocols are supported: ftp, telnet, ssh, http, https, pop3, pop3s, imap, imaps, smtp, vnc, postgresql and socks5.
+Currently the following protocols are supported: ftp, telnet, ssh, http, https, pop3, pop3s, imap, imaps, smtp, smtps, vnc, postgresql, mysql, rdp and socks5.
 
-**You need Python 3.7.0 or higher.**
+**You need Python 3.14 or higher.** Dependencies are managed with `uv <https://docs.astral.sh/uv/>`_.
 
 Starting the honeypot
 -----------------------
@@ -102,51 +98,45 @@ This log file contains entries for all connections to the honeypot. The data inc
 
 **log_auth.csv**
 
-This log file contains information for all authentication attempts where it was possible to log a username and plaintext password. Log entries will appear in this file as soon as the password has been transmitted.
+This log file contains one line per authentication attempt. Log entries appear as soon as the credentials have been transmitted. The first ten columns are fixed (T-Pot's logstash and ewsposter parse them by position); ``password_hash`` carries challenge/response material in a hashcat/John-compatible format when the protocol never sends the password in clear (MySQL, VNC, SMTP CRAM-MD5), new columns are only ever appended.
 
 .. code-block:: shell
 
   $ tail log_auth.csv
-  timestamp,auth_id,session_id,source_ip,source_port,destination_port,protocol,username,password
-  2016-03-12 20:35:02.258198,192.168.2.129,51551,23,telnet,bond,james
-  2016-03-12 20:35:09.658593,192.168.2.129,51551,23,telnet,clark,P@SSw0rd123
-  2016-03-18 19:31:38.064700,192.168.2.129,53416,22,ssh,NOP_Manden,M@MS3
-  2016-03-18 19:31:38.521047,192.168.2.129,53416,22,ssh,guest,guest
-  2016-03-18 19:31:39.376768,192.168.2.129,53416,22,ssh,HundeMad,katNIPkat
-  2016-03-18 19:33:07.064504,192.168.2.129,53431,110,pop3,charles,N00P1SH
-  2016-03-18 19:33:12.504483,192.168.2.129,53431,110,pop3,NektarManden,mANDENnEktar
-  2016-03-18 19:33:24.952645,192.168.2.129,53433,21,ftp,Jamie,brainfreeze
-  2016-03-18 19:33:47.008562,192.168.2.129,53436,21,ftp,NektarKongen,SuperS@cretP4ssw0rd1
-  2016-03-18 19:36:56.077840,192.168.2.129,53445,21,ftp,Joooop,Pooop
+  timestamp,auth_id,session_id,source_ip,source_port,destination_ip,destination_port,protocol,username,password,password_hash
+  2026-10-01 20:35:02.258198,3f1c...,6c7d653f-...,192.168.2.129,51551,10.0.0.5,23,telnet,bond,james,
+  2026-10-01 20:35:09.658593,9a0b...,6c7d653f-...,192.168.2.129,51551,10.0.0.5,23,telnet,clark,P@SSw0rd123,
+  2026-10-01 20:36:12.504483,77de...,f3af2c8c-...,192.168.2.129,53431,10.0.0.5,3306,mysql,root,,$mysqlna$1a2b...*9f8e...
+
+**Warning:** values are written exactly as the attacker sent them. A "password" like ``=HYPERLINK("http://evil")`` ends up verbatim in the CSV. Do not open these files in a spreadsheet application with formula evaluation enabled.
 
 
 Installing Heralding
 ---------------------
 
-For step by step instructions on how to install and run heralding in a Python virtual environment using Ubuntu, see this `guide <https://github.com/johnnykv/heralding/blob/master/INSTALL.md>`_. Otherwise, the basic installation instructions are below.
-
-To install the latest stable (well, semi-stable) version, use pip:
+Heralding uses `uv <https://docs.astral.sh/uv/>`_ and needs Python 3.14 or newer.
 
 .. code-block:: shell
 
-  pip install heralding
+  git clone https://github.com/johnnykv/heralding
+  cd heralding
+  uv sync                       # add --extra hpfeeds / --extra curiosum as needed
+  mkdir tmp && cd tmp
+  sudo ../.venv/bin/heralding   # or: uv run heralding -c myconfig.yml -l heralding.log
 
-Make sure that requirements and pip is installed.
-Simple way to do this on a Debian-based OS is:
+Heralding binds the configured ports, then drops to ``nobody``/``nogroup`` (configurable with
+``user``/``group`` in the config). Certificates and the SSH host key are created in the working
+directory on first start.
+
+Running the tests
+-----------------
 
 .. code-block:: shell
 
-  sudo apt-get install python-pip python-dev build-essential libssl-dev libffi-dev
-  sudo pip install -r requirements.txt
-  
-And finally start the honeypot:
-  
-.. code-block:: shell
+  uv sync
+  uv run ruff check && uv run ruff format --check
+  uv run pytest
 
-  mkdir tmp
-  cd tmp
-  sudo heralding
-  
 Docker Build
 -------------
 1.Checkout the code:
