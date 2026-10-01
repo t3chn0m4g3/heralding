@@ -1,7 +1,8 @@
 # will request and log the public ip every hours from ipify
 public_ip_as_destination_ip: false
 
-# ip address to listen on
+# ip address(es) to listen on; a list binds several, e.g. for IPv4 + IPv6:
+#   bind_host: ["0.0.0.0", "::"]
 bind_host: 0.0.0.0
 
 # system profile the honeypot presents (banners, versions, host names, certificate subjects).

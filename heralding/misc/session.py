@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import ipaddress
 import json
 import logging
 import uuid
@@ -23,13 +24,23 @@ from heralding.reporting.hub import get_hub
 logger = logging.getLogger(__name__)
 
 
+def normalize_ip(value):
+    """Strip the IPv4-mapped IPv6 prefix (::ffff:a.b.c.d -> a.b.c.d); leave anything else as is."""
+    try:
+        addr = ipaddress.ip_address(str(value))
+    except ValueError:
+        return value
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return str(mapped) if mapped is not None else str(addr)
+
+
 class Session:
     def __init__(
         self, source_ip, source_port, protocol, users, destination_port=None, destination_ip=""
     ):
 
         self.id = uuid.uuid4()
-        self.source_ip = source_ip
+        self.source_ip = normalize_ip(source_ip)
         self.source_port = source_port
         self.protocol = protocol
         import heralding.honeypot  # local import: honeypot imports the capabilities, which import us
@@ -37,7 +48,7 @@ class Session:
         if heralding.honeypot.Honeypot.public_ip:
             self.destination_ip = heralding.honeypot.Honeypot.public_ip
         else:
-            self.destination_ip = destination_ip
+            self.destination_ip = normalize_ip(destination_ip)
         self.destination_port = destination_port
         self.timestamp = datetime.now(UTC)
         self.num_ = 0
