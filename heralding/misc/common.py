@@ -14,22 +14,17 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import asyncio
+import ipaddress
 import logging
-import os
-
-import requests
-from Crypto.PublicKey import RSA
-from OpenSSL import crypto
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
-
-def on_unhandled_task_exception(task):
-    if not task.cancelled():
-        task_exc = task.exception()
-        if task_exc:
-            logger.exception("Stopping because %s died: %s", task, task_exc)
-            os._exit(1)
+PUBLIC_IP_ENDPOINTS = (
+    "https://api.ipify.org",
+    "https://ifconfig.me/ip",
+    "https://icanhazip.com",
+)
 
 
 async def cancel_all_pending_tasks(grace_seconds: float = 5.0) -> None:
@@ -41,45 +36,22 @@ async def cancel_all_pending_tasks(grace_seconds: float = 5.0) -> None:
         await asyncio.wait(pending, timeout=grace_seconds)
 
 
-def generate_self_signed_cert(
-    cert_country,
-    cert_state,
-    cert_organization,
-    cert_locality,
-    cert_organizational_unit,
-    cert_common_name,
-    valid_days,
-    serial_number,
-):
-    rsa_key = RSA.generate(2048)
-
-    pk = crypto.load_privatekey(crypto.FILETYPE_PEM, rsa_key.exportKey("PEM", pkcs=1))
-    cert = crypto.X509()
-    sub = cert.get_subject()
-    sub.CN = cert_common_name
-    sub.C = cert_country
-    sub.ST = cert_state
-    sub.L = cert_locality
-    sub.O = cert_organization
-
-    # optional
-    if cert_organizational_unit:
-        sub.OU = cert_organizational_unit
-
-    cert.set_serial_number(serial_number)
-    cert.gmtime_adj_notBefore(0)
-    cert.gmtime_adj_notAfter(valid_days * 24 * 60 * 60)  # Valid for a year
-    cert.set_issuer(sub)
-    cert.set_pubkey(pk)
-    cert.sign(pk, "sha1")
-
-    cert_text = crypto.dump_certificate(crypto.FILETYPE_PEM, cert)
-    priv_key_text = rsa_key.exportKey("PEM", pkcs=1)
-
-    return cert_text, priv_key_text
+def _fetch_text(url: str, timeout: float) -> str:
+    if not url.startswith("https://"):
+        raise ValueError("only https endpoints are allowed")
+    req = urllib.request.Request(url, headers={"User-Agent": "curl/8.5.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return resp.read(64).decode("ascii", "replace")
 
 
-def get_public_ip():
-    r = requests.get("https://api.ipify.org")
-    r.raise_for_status()
-    return r.text
+def get_public_ip(timeout: float = 5.0) -> str:
+    """Blocking lookup with a timeout and fallbacks. Run it in a thread."""
+    errors = []
+    for url in PUBLIC_IP_ENDPOINTS:
+        try:
+            value = _fetch_text(url, timeout).strip()
+            ipaddress.ip_address(value)
+            return value
+        except (OSError, ValueError) as exc:
+            errors.append(f"{url} [{type(exc).__name__}] {exc}")
+    raise RuntimeError("; ".join(errors))

@@ -15,11 +15,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import asyncio
-import grp
 import logging
 import logging.handlers
 import os
-import pwd
 import signal
 from argparse import ArgumentParser
 
@@ -27,6 +25,7 @@ import yaml
 
 import heralding
 import heralding.honeypot
+from heralding.misc.privileges import drop_privileges
 from heralding.reporting.hub import build_hub, set_hub
 
 logger = logging.getLogger()
@@ -85,23 +84,6 @@ class LogFilter(logging.Filter):
             return True
 
 
-def drop_privileges(uid_name="nobody", gid_name="nogroup"):
-    """Drops current privileges to the privileges of selected user."""
-    if os.getuid() != 0:
-        return
-
-    wanted_uid = pwd.getpwnam(uid_name)[2]
-    wanted_gid = grp.getgrnam(gid_name)[2]
-
-    os.setgid(wanted_gid)
-    os.setuid(wanted_uid)
-
-    new_uid_name = pwd.getpwuid(os.getuid())[0]
-    new_gid_name = grp.getgrgid(os.getgid())[0]
-
-    logger.info("Privileges dropped, running as %s/%s.", new_uid_name, new_gid_name)
-
-
 def load_config(config_file):
     if not os.path.isfile(config_file):
         package_directory = os.path.dirname(os.path.abspath(heralding.__file__))
@@ -127,7 +109,7 @@ async def main_async(config, stop_event: asyncio.Event | None = None) -> None:
         logger.exception("Could not start honeypot")
         await honeypot.stop()
         raise SystemExit(1) from None
-    drop_privileges()
+    drop_privileges(config.get("user", "nobody"), config.get("group", "nogroup"))
     await stop_event.wait()
     logger.info("Shutdown requested")
     await honeypot.stop()

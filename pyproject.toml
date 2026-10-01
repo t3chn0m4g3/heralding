@@ -13,9 +13,6 @@ dependencies = [
     "cryptography>=46",
     "PyYAML>=6.0.3",
     "rsa>=4.9",
-    # transitional until P4/P5 remove the hard imports:
-    "pyOpenSSL>=25",
-    "requests>=2.32",
 ]
 
 [project.optional-dependencies]

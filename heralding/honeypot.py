@@ -23,6 +23,7 @@ import heralding.capabilities  # noqa: F401  registers all capabilities
 import heralding.misc.common as common
 from heralding.capabilities import smtp, ssh
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc import certs
 from heralding.reporting.hub import get_hub
 
 logger = logging.getLogger(__name__)
@@ -61,10 +62,10 @@ class Honeypot:
         while True:
             try:
                 Honeypot.public_ip = await asyncio.to_thread(common.get_public_ip)
-                logger.warning("Found public ip: %s", Honeypot.public_ip)
-            except Exception as ex:
+                logger.info("Found public ip: %s", Honeypot.public_ip)
+            except Exception as exc:
                 Honeypot.public_ip = ""
-                logger.warning("Could not request public ip from ipify, error: %s", ex)
+                logger.warning("Could not determine public ip [%s] %s", type(exc).__name__, exc)
             await asyncio.sleep(3600)
 
     def setup_wordlist(self):
@@ -107,10 +108,13 @@ class Honeypot:
             cap = cls(cap_cfg)
             ssl_context = None
             if cls.TLS == "implicit" or cls.NEEDS_CERT:
-                pem_file = f"{cap_name}.pem"
-                self.create_cert_if_not_exists(cap_name, pem_file)
+                psd = cap_cfg.get("protocol_specific_data") or {}
+                pem_file = certs.ensure_cert(f"{cap_name}.pem", psd.get("cert"))
                 if cls.TLS == "implicit":
-                    ssl_context = self.create_ssl_context(pem_file)
+                    min_version = psd.get("tls_min_version") or self.config.get(
+                        "tls_min_version", "TLSv1_2"
+                    )
+                    ssl_context = self.create_ssl_context(pem_file, min_version)
             try:
                 server = await cap.create_server(bind_host, port, ssl_context)
             except OSError as exc:
@@ -149,37 +153,9 @@ class Honeypot:
 
         logger.info("All tasks were stopped.")
 
-    def create_cert_if_not_exists(self, cap_name, pem_file):
-        if not os.path.isfile(pem_file):
-            logger.debug("Generating certificate and key: %s", pem_file)
-
-            cert_dict = self.config["capabilities"][cap_name]["protocol_specific_data"]["cert"]
-            cert_cn = cert_dict["common_name"]
-            cert_country = cert_dict["country"]
-            cert_state = cert_dict["state"]
-            cert_locality = cert_dict["locality"]
-            cert_org = cert_dict["organization"]
-            cert_org_unit = cert_dict["organizational_unit"]
-            valid_days = int(cert_dict["valid_days"])
-            serial_number = int(cert_dict["serial_number"])
-
-            cert, key = common.generate_self_signed_cert(
-                cert_country,
-                cert_state,
-                cert_org,
-                cert_locality,
-                cert_org_unit,
-                cert_cn,
-                valid_days,
-                serial_number,
-            )
-            with open(pem_file, "wb") as _pem_file:
-                _pem_file.write(cert)
-                _pem_file.write(key)
-
     @staticmethod
-    def create_ssl_context(pem_file):
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.check_hostname = False
+    def create_ssl_context(pem_file, min_version="TLSv1_2"):
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.minimum_version = getattr(ssl.TLSVersion, str(min_version))
         ssl_context.load_cert_chain(pem_file)
         return ssl_context

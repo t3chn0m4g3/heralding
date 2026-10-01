@@ -8,6 +8,14 @@ bind_host: 0.0.0.0
 max_sessions: 800
 max_sessions_per_ip: 50
 
+# minimum TLS version for the *s capabilities (ssl.TLSVersion name); can be
+# overridden per capability in protocol_specific_data.tls_min_version
+tls_min_version: TLSv1_2
+
+# when started as root, drop to this user/group after binding the ports
+# user: nobody
+# group: nogroup
+
 # logging of sessions and authentication attempts
 activity_logging:
   file:
