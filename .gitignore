@@ -47,7 +47,6 @@ beeswarm.cfg
 
 *.gz
 
-docs/_build
 .noseids
 admin_passwd_hash
 *.pem
@@ -55,3 +54,6 @@ admin_passwd_hash
 
 venv/*
 heralding/heralding.yml
+
+# Local planning and validation documents
+/docs/
