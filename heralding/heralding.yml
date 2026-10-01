@@ -4,6 +4,10 @@ public_ip_as_destination_ip: false
 # ip address to listen on
 bind_host: 0.0.0.0
 
+# connection limits: new connections beyond these are closed immediately
+max_sessions: 800
+max_sessions_per_ip: 50
+
 # logging of sessions and authentication attempts
 activity_logging:
   file:

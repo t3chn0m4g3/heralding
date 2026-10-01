@@ -66,6 +66,10 @@ class Honeypot:
     async def start(self):
         """Starts services."""
 
+        HandlerBase.configure_limits(
+            self.config.get("max_sessions", 800), self.config.get("max_sessions_per_ip", 50)
+        )
+
         if self.config.get("public_ip_as_destination_ip") is True:
             self.public_ip_task = asyncio.create_task(self._record_and_lookup_public_ip())
 

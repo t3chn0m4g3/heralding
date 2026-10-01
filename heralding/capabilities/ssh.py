@@ -59,14 +59,10 @@ class SSH(asyncssh.SSHServer, HandlerBase):
         return False
 
     def handle_connection(self):
-        if HandlerBase.global_sessions > HandlerBase.MAX_GLOBAL_SESSIONS:
-            protocol = self.__class__.__name__.lower()
-            logger.warning(
-                "Got {} session on port {} from {}:{}, but not handling it because the global session limit has "
-                "been reached".format(protocol, self.port, *self.address)
-            )
-        else:
-            self.session = self.create_session(self.address, self.dest_address)
+        if self._limit_reached(self.address):
+            self.connection.close()
+            return
+        self.session = self.create_session(self.address, self.dest_address)
 
     def get_auxiliary_data(self):
         data_fields = ["client_version", "recv_cipher", "recv_mac", "recv_compression"]
