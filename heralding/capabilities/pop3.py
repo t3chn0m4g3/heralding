@@ -27,7 +27,7 @@ class Pop3(HandlerBase):
     def __init__(self, options):
         super().__init__(options)
         self.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
-        self.banner = self.options["protocol_specific_data"]["banner"]
+        self.banner = self.persona_value("banner", "+OK POP3 server ready")
 
     async def execute_capability(self, reader, writer, session):
         await self._handle_session(session, reader, writer)

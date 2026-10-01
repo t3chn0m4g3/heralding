@@ -31,7 +31,7 @@ class Imap(HandlerBase):
     def __init__(self, options):
         super().__init__(options)
         self.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
-        self.banner = self.options["protocol_specific_data"]["banner"]
+        self.banner = self.persona_value("banner", "* OK IMAP4rev1 Server Ready")
 
         self.available_commands = ["authenticate", "capability", "login", "logout", "noop"]
         self.available_mechanisms = ["plain"]

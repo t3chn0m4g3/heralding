@@ -53,8 +53,9 @@ def _b64decode(blob) -> bytes:
 class SMTPHandler(SMTP):
     fqdn = ""
 
-    def __init__(self, reader, writer, session, options):
-        self.banner = options["protocol_specific_data"]["banner"]
+    def __init__(self, reader, writer, session, options, banner="ESMTP", ehlo_hostname=None):
+        self.banner = banner
+        self.ehlo_hostname = ehlo_hostname or banner
         super().__init__(None, hostname=self.banner, data_size_limit=DATA_SIZE_LIMIT)
         # Reset standard banner.
         self.__ident__ = ""
@@ -85,7 +86,7 @@ class SMTPHandler(SMTP):
             await self.push("501 Syntax: EHLO hostname")
             return
         self._set_rset_state()
-        await self.push(f"250-{self.hostname} Hello {hostname}")
+        await self.push(f"250-{self.ehlo_hostname} Hello {hostname}")
         await self.push(f"250-SIZE {DATA_SIZE_LIMIT}")
         await self.push("250-8BITMIME")
         await self.push("250 AUTH PLAIN LOGIN CRAM-MD5")
@@ -211,5 +212,13 @@ class smtp(HandlerBase):
             set_fqdn(explicit_fqdn)
 
     async def execute_capability(self, reader, writer, session):
-        smtp_cap = SMTPHandler(reader, writer, session, self._options)
+        persona = HandlerBase.persona
+        smtp_cap = SMTPHandler(
+            reader,
+            writer,
+            session,
+            self._options,
+            banner=self.persona_value("banner", "ESMTP"),
+            ehlo_hostname=persona.fqdn if persona is not None else None,
+        )
         await smtp_cap._handle_client()

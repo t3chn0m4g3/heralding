@@ -31,6 +31,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SERVER_HEADER = "Microsoft-IIS/10.0"
 
+# Error page templates in the style of the persona's web server family (no Python fingerprints).
+ERROR_PAGE_IIS = (
+    '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN""http://www.w3.org/TR/html4/strict.dtd">\r\n'
+    "<HTML><HEAD><TITLE>%(message)s</TITLE>\r\n"
+    '<META HTTP-EQUIV="Content-Type" Content="text/html; charset=us-ascii"></HEAD>\r\n'
+    "<BODY><h2>%(message)s</h2>\r\n<hr><p>HTTP Error %(code)d. %(explain)s</p>\r\n</BODY></HTML>\r\n"
+)
+ERROR_PAGE_UNIX = (
+    "<html>\r\n<head><title>%(code)d %(message)s</title></head>\r\n"
+    "<body>\r\n<center><h1>%(code)d %(message)s</h1></center>\r\n"
+    "<hr><center>%(server)s</center>\r\n</body>\r\n</html>\r\n"
+)
+
 HTTP_401_BODY = (
     b"<!DOCTYPE html><html><head><title>401 Unauthorized</title></head>"
     b"<body><h1>Unauthorized</h1><p>This server could not verify that you are authorized "
@@ -41,9 +54,11 @@ HTTP_401_BODY = (
 class HTTPHandler(AsyncBaseHTTPRequestHandler):
     sys_version = ""  # never append "Python/x.y" to the Server header
 
-    def __init__(self, reader, writer, httpsession, options):
-        psd = options.get("protocol_specific_data") or {}
-        self.server_version = psd.get("banner") or DEFAULT_SERVER_HEADER
+    def __init__(self, reader, writer, httpsession, options, server_header=None, os_family=None):
+        self.server_version = server_header or DEFAULT_SERVER_HEADER
+        template = ERROR_PAGE_IIS if (os_family or "windows") == "windows" else ERROR_PAGE_UNIX
+        self.error_message_format = template.replace("%(server)s", self.server_version)
+        self.error_content_type = "text/html"
         self._session = httpsession
         super().__init__(reader, writer, writer.get_extra_info("peername"))
 
@@ -57,7 +72,8 @@ class HTTPHandler(AsyncBaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(HTTP_401_BODY)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(HTTP_401_BODY)
+        if self.command != "HEAD":
+            self.wfile.write(HTTP_401_BODY)
         self.close_connection = True
 
     def _handle_auth(self):
@@ -97,6 +113,14 @@ class Http(HandlerBase):
         self._options = options
 
     async def execute_capability(self, reader, writer, session):
-        http_cap = HTTPHandler(reader, writer, httpsession=session, options=self._options)
+        persona = HandlerBase.persona
+        http_cap = HTTPHandler(
+            reader,
+            writer,
+            httpsession=session,
+            options=self._options,
+            server_header=self.persona_value("banner", DEFAULT_SERVER_HEADER),
+            os_family=persona.os_family if persona is not None else None,
+        )
         await http_cap.run()
         session.end_session()

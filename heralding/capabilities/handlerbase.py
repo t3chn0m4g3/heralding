@@ -46,6 +46,7 @@ class HandlerBase:
     TLS: str | None = None  # "implicit" | "starttls" | None
     TRANSPORT: str = "tcp"  # "tcp" | "udp"
     NEEDS_CERT: bool = False  # capability handles TLS itself but needs <NAME>.pem in CWD
+    persona = None  # set by Honeypot.start(); see misc/persona.py
     _registry: dict[str, type[HandlerBase]] = {}
 
     max_sessions = 800
@@ -63,6 +64,21 @@ class HandlerBase:
     @classmethod
     def registry(cls) -> dict[str, type[HandlerBase]]:
         return dict(cls._registry)
+
+    @classmethod
+    def set_persona(cls, persona) -> None:
+        HandlerBase.persona = persona
+
+    def persona_value(self, key: str, default=None):
+        """Explicit, non-empty config value wins; then the persona; then the default."""
+        explicit = (self.options.get("protocol_specific_data") or {}).get(key)
+        if explicit not in (None, ""):
+            return explicit
+        if HandlerBase.persona is not None:
+            value = HandlerBase.persona.get(self.NAME, key)
+            if value is not None:
+                return value
+        return default
 
     @classmethod
     def configure_limits(cls, max_sessions: int, max_sessions_per_ip: int) -> None:

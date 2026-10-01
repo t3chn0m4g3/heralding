@@ -78,7 +78,7 @@ class SSH(asyncssh.SSHServer, HandlerBase):
         key_file = "ssh.key"
         self.generate_ssh_key(key_file)
         options = self.options
-        banner = options["protocol_specific_data"]["banner"]
+        banner = self.persona_value("banner", "SSH-2.0-OpenSSH_9.6")
         return await asyncssh.create_server(
             lambda: type(self)(options),
             bind_host,

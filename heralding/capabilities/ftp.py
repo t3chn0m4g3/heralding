@@ -34,10 +34,12 @@ TERMINATOR = "\r\n"
 class FtpHandler:
     """Handles a single FTP connection"""
 
-    def __init__(self, reader, writer, options, session):
-        self.banner = options["protocol_specific_data"]["banner"]
+    def __init__(
+        self, reader, writer, options, session, banner="FTP Server", syst_type="UNIX Type: L8"
+    ):
+        self.banner = banner
         self.max_loggins = int(options["protocol_specific_data"]["max_attempts"])
-        self.syst_type = options["protocol_specific_data"]["syst_type"]
+        self.syst_type = syst_type
         self.authenticated = False
         self.writer = writer
         self.reader = reader
@@ -123,5 +125,12 @@ class ftp(HandlerBase):
         self._options = options
 
     async def execute_capability(self, reader, writer, session):
-        ftp_cap = FtpHandler(reader, writer, self._options, session)
+        ftp_cap = FtpHandler(
+            reader,
+            writer,
+            self._options,
+            session,
+            banner=self.persona_value("banner", "FTP Server"),
+            syst_type=self.persona_value("syst_type", "UNIX Type: L8"),
+        )
         await ftp_cap.serve()

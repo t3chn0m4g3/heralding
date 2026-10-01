@@ -23,7 +23,7 @@ import heralding.capabilities  # noqa: F401  registers all capabilities
 import heralding.misc.common as common
 from heralding.capabilities import smtp, ssh
 from heralding.capabilities.handlerbase import HandlerBase
-from heralding.misc import certs
+from heralding.misc import certs, persona
 from heralding.reporting.hub import get_hub
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ class Honeypot:
         self._servers = []
         self.public_ip_task = None
         self._fqdn_task = None
+        self.persona = None
 
     async def _refresh_fqdn(self):
         while True:
@@ -87,6 +88,9 @@ class Honeypot:
         HandlerBase.configure_limits(
             self.config.get("max_sessions", 800), self.config.get("max_sessions_per_ip", 50)
         )
+        self.persona = persona.select_persona(self.config)
+        HandlerBase.set_persona(self.persona)
+        logger.info("Persona: %s (%s)", self.persona.name, self.persona.fqdn)
 
         if self.config.get("public_ip_as_destination_ip") is True:
             self.public_ip_task = asyncio.create_task(self._record_and_lookup_public_ip())
@@ -109,7 +113,11 @@ class Honeypot:
             ssl_context = None
             if cls.TLS == "implicit" or cls.NEEDS_CERT:
                 psd = cap_cfg.get("protocol_specific_data") or {}
-                pem_file = certs.ensure_cert(f"{cap_name}.pem", psd.get("cert"))
+                pem_file = certs.ensure_cert(
+                    f"{cap_name}.pem",
+                    self._cert_subject(psd.get("cert")),
+                    persona_tag=self.persona.name,
+                )
                 if cls.TLS == "implicit":
                     min_version = psd.get("tls_min_version") or self.config.get(
                         "tls_min_version", "TLSv1_2"
@@ -158,6 +166,16 @@ class Honeypot:
         await common.cancel_all_pending_tasks()
 
         logger.info("All tasks were stopped.")
+
+    def _cert_subject(self, cert_cfg):
+        """Explicit certificate subject fields win; unset ones ("None", "", "*") come from the persona."""
+        merged = dict(cert_cfg or {})
+        for key, value in self.persona.cert_subject.items():
+            current = merged.get(key)
+            if certs.is_unset(current) or (key == "common_name" and current == "*"):
+                if value:
+                    merged[key] = value
+        return merged
 
     @staticmethod
     def create_ssl_context(pem_file, min_version="TLSv1_2"):

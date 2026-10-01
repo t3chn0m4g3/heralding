@@ -69,10 +69,25 @@ def generate_self_signed_cert(
     )
 
 
-def ensure_cert(pem_path: str, cert_cfg: dict | None) -> str:
-    """Create <pem_path> (cert + key, mode 0600) from the config block unless it exists."""
+def ensure_cert(pem_path: str, cert_cfg: dict | None, persona_tag: str | None = None) -> str:
+    """Create <pem_path> (cert + key, mode 0600) from the config block unless it exists.
+
+    With a persona_tag, a marker file <pem_path>.persona records which persona the
+    certificate belongs to; a different tag regenerates the certificate. A certificate
+    without a marker (pre-2.0 installation) is kept and the marker is added.
+    """
+    marker = pem_path + ".persona"
     if os.path.isfile(pem_path):
-        return pem_path
+        if persona_tag is None:
+            return pem_path
+        if not os.path.isfile(marker):
+            _write_marker(marker, persona_tag)
+            return pem_path
+        with open(marker, encoding="utf-8") as fh:
+            if fh.read().strip() == persona_tag:
+                return pem_path
+        os.remove(pem_path)
+        os.remove(marker)
     cfg = cert_cfg or {}
     cert, key = generate_self_signed_cert(
         cfg.get("country"),
@@ -88,4 +103,11 @@ def ensure_cert(pem_path: str, cert_cfg: dict | None) -> str:
     with os.fdopen(fd, "wb") as fh:
         fh.write(cert)
         fh.write(key)
+    if persona_tag is not None:
+        _write_marker(marker, persona_tag)
     return pem_path
+
+
+def _write_marker(marker: str, tag: str) -> None:
+    with open(marker, "w", encoding="utf-8") as fh:
+        fh.write(tag)

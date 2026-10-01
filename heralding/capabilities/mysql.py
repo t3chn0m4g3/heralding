@@ -60,7 +60,9 @@ class MySQL(HandlerBase):
     def __init__(self, options):
         super().__init__(options)
         self.PROTO_VER = b"\x0a"
-        self.SERVER_VER = b"5.7.16\x00"
+        self.SERVER_VER = (
+            self.persona_value("version", "5.7.16").encode("ascii", "replace") + b"\x00"
+        )
 
     def server_greeting(self, salt):
         # Server Greeting (HandshakeV10): the 20-byte salt is split 8 + 12

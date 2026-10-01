@@ -64,3 +64,25 @@ def test_is_unset():
     assert certs.is_unset("None")
     assert certs.is_unset("")
     assert not certs.is_unset("US")
+
+
+def test_persona_marker_written_and_cert_regenerated_on_change(tmp_path):
+    from pathlib import Path
+
+    p = tmp_path / "https.pem"
+    first = certs.ensure_cert(str(p), {"common_name": "*"}, persona_tag="debian-12")
+    assert (tmp_path / "https.pem.persona").read_text() == "debian-12"
+    data1 = Path(first).read_bytes()
+    certs.ensure_cert(str(p), {"common_name": "*"}, persona_tag="debian-12")
+    assert Path(first).read_bytes() == data1  # unchanged
+    certs.ensure_cert(str(p), {"common_name": "*"}, persona_tag="rhel-9")
+    assert Path(first).read_bytes() != data1  # regenerated
+    assert (tmp_path / "https.pem.persona").read_text() == "rhel-9"
+
+
+def test_legacy_cert_without_marker_is_kept(tmp_path):
+    p = tmp_path / "imaps.pem"
+    p.write_bytes(b"legacy")
+    certs.ensure_cert(str(p), {"common_name": "*"}, persona_tag="rhel-9")
+    assert p.read_bytes() == b"legacy"
+    assert (tmp_path / "imaps.pem.persona").read_text() == "rhel-9"
