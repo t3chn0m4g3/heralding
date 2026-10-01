@@ -147,8 +147,20 @@ class Session:
         }
         return entry
 
+    MAX_COMMANDS = 50
+    MAX_COMMAND_LEN = 256
+
     def set_auxiliary_data(self, data):
-        self.auxiliary_data = data
+        """Merge protocol specific data into the session (keys from several sources coexist)."""
+        self.auxiliary_data.update(data)
+
+    def record_command(self, line):
+        """Keep a bounded list of the client's command lines (auxiliary_data.commands)."""
+        commands = self.auxiliary_data.setdefault("commands", [])
+        if len(commands) >= self.MAX_COMMANDS:
+            self.auxiliary_data["commands_truncated"] = True
+            return
+        commands.append(str(line)[: self.MAX_COMMAND_LEN])
 
     def end_session(self):
         if not self.session_ended:

@@ -58,6 +58,8 @@ class FtpHandler:
 
         while self.serve_flag:
             resp = await self.getcmd()
+            if resp:
+                self.session.record_command(resp.rstrip("\r\n"))
             if not resp:
                 self.stop()
                 break

@@ -62,7 +62,9 @@ class TelnetWrapper(TelnetHandlerBase):
     async def _auth_loop(self):
         while self.auth_count < self.max_tries:
             username = await self.readline(prompt=b"Username: ", use_history=False)
+            self.session.record_command(decode_lossless(username))
             password = await self.readline(echo=False, prompt=b"Password: ", use_history=False)
+            self.session.record_command(decode_lossless(password))
             self.session.add_auth_attempt(
                 _type="plaintext",
                 username=decode_lossless(username),

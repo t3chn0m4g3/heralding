@@ -42,6 +42,7 @@ class Pop3(HandlerBase):
                 break
 
             raw_msg_str = decode_lossless(raw_msg)
+            session.record_command(raw_msg_str.rstrip("\r\n"))
 
             session.activity()
             cmd_msg = raw_msg_str.rstrip().split(" ", 1)
