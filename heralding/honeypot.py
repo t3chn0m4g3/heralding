@@ -22,11 +22,7 @@ import asyncssh
 
 import heralding.capabilities.handlerbase
 import heralding.misc.common as common
-from heralding.reporting.curiosum_integration import CuriosumIntegration
-from heralding.reporting.file_logger import FileLogger
-from heralding.reporting.hpfeeds_logger import HpFeedsLogger
-from heralding.reporting.reporting_relay import ReportingRelay
-from heralding.reporting.syslog_logger import SyslogLogger
+from heralding.reporting.hub import get_hub
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +39,6 @@ class Honeypot:
         self.SshClass = None
         self.config = config
         self._servers = []
-        self._loggers = []
-        self._logger_futures = []
         self.public_ip_task = None
 
     async def _record_and_lookup_public_ip(self):
@@ -70,13 +64,6 @@ class Honeypot:
         with open(wordlist_file) as f:
             Honeypot.wordlist = f.read().splitlines()
 
-    def _start_logger(self, instance):
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(None, instance.start)
-        future.add_done_callback(common.on_unhandled_task_exception)
-        self._logger_futures.append(future)
-        self._loggers.append(instance)
-
     async def start(self):
         """Starts services."""
 
@@ -86,34 +73,6 @@ class Honeypot:
         # setup hash cracker's wordlist
         if self.config["hash_cracker"]["enabled"]:
             self.setup_wordlist()
-
-        # start activity logging
-        activity = self.config.get("activity_logging") or {}
-        if activity.get("file", {}).get("enabled"):
-            file_cfg = activity["file"]
-            self._start_logger(
-                FileLogger(
-                    file_cfg["session_csv_log_file"],
-                    file_cfg["session_json_log_file"],
-                    file_cfg["authentication_log_file"],
-                )
-            )
-        if activity.get("syslog", {}).get("enabled"):
-            self._start_logger(SyslogLogger())
-        if activity.get("hpfeeds", {}).get("enabled"):
-            hp = activity["hpfeeds"]
-            self._start_logger(
-                HpFeedsLogger(
-                    hp["session_channel"],
-                    hp["auth_channel"],
-                    hp["host"],
-                    hp["port"],
-                    hp["ident"],
-                    hp["secret"],
-                )
-            )
-        if activity.get("curiosum", {}).get("enabled"):
-            self._start_logger(CuriosumIntegration(activity["curiosum"]["port"]))
 
         bind_host = self.config["bind_host"]
         listen_ports = []
@@ -178,7 +137,7 @@ class Honeypot:
                 raise
             else:
                 logger.info("Started %s capability listening on port %s", c.__name__, port)
-        ReportingRelay.logListenPorts(listen_ports)
+        get_hub().emit_listen_ports(listen_ports)
 
     async def stop(self):
         """Stops services"""
@@ -193,9 +152,6 @@ class Honeypot:
         for server in self._servers:
             server.close()
             await server.wait_closed()
-
-        for lg in self._loggers:
-            lg.stop()
 
         await common.cancel_all_pending_tasks()
 

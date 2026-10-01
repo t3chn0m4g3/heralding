@@ -14,10 +14,8 @@ dependencies = [
     "PyYAML>=6.0.3",
     "rsa>=4.9",
     # transitional until P4/P5 remove the hard imports:
-    "pyzmq>=27",
     "pyOpenSSL>=25",
     "requests>=2.32",
-    "hpfeeds3>=0.9.10",
 ]
 
 [project.optional-dependencies]

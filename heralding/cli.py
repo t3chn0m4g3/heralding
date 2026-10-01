@@ -21,14 +21,13 @@ import logging.handlers
 import os
 import pwd
 import signal
-import threading
 from argparse import ArgumentParser
 
 import yaml
 
 import heralding
 import heralding.honeypot
-import heralding.reporting.reporting_relay
+from heralding.reporting.hub import build_hub, set_hub
 
 logger = logging.getLogger()
 
@@ -155,19 +154,21 @@ def main(argv=None) -> int:
     try:
         config = load_config(args.config)
     except Exception as ex:
-        logger.error("Error while reading config file %s [%s] %s", args.config, type(ex).__name__, ex)
+        logger.error(
+            "Error while reading config file %s [%s] %s", args.config, type(ex).__name__, ex
+        )
         return 2
 
-    relay = heralding.reporting.reporting_relay.ReportingRelay()
-    relay_thread = threading.Thread(target=relay.start, name="reporting-relay", daemon=True)
-    relay_thread.start()
+    hub = build_hub(config)
+    set_hub(hub)
+    hub.start()
     try:
         asyncio.run(main_async(config))
     except SystemExit as ex:
         return int(ex.code or 1)
     finally:
-        relay.stop()
-        relay_thread.join(timeout=5)
+        hub.stop()
+        set_hub(None)
     return 0
 
 

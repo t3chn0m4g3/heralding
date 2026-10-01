@@ -19,7 +19,7 @@ import uuid
 from datetime import UTC, datetime
 
 import heralding.honeypot
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.reporting.hub import get_hub
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class Session:
 
     def log_start_session(self):
         entry = self.get_session_info(False)
-        ReportingRelay.logSessionInfo(entry)
+        get_hub().emit_session(entry)
 
     def activity(self):
         self.last_activity = datetime.now(UTC)
@@ -92,7 +92,7 @@ class Session:
             entry["password"] = kwargs["password"]
         if "password_hash" in kwargs:
             entry["password_hash"] = kwargs["password_hash"]
-        ReportingRelay.logAuthAttempt(entry)
+        get_hub().emit_auth(entry)
 
         # add to internal dict used for reporting when the session ends
         self.auth_attempts.append(
@@ -100,6 +100,9 @@ class Session:
                 "timestamp": entry["timestamp"],
                 "username": entry["username"],
                 "password": entry["password"],
+                "auth_id": entry["auth_id"],
+                "password_hash": entry["password_hash"],
+                "method": _type,
             }
         )
 
@@ -141,5 +144,5 @@ class Session:
             self.connected = False
             entry = self.get_session_info(True)
 
-            ReportingRelay.logSessionInfo(entry)
+            get_hub().emit_session(entry)
             logger.debug("Session with session id %s ended", self.id)
