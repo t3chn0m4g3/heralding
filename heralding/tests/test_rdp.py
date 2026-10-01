@@ -1,6 +1,7 @@
 import asyncio
 import socket
 import ssl
+import warnings
 
 import pytest
 
@@ -98,7 +99,9 @@ def _rdp_login(host, port, tls_version):
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False  # the honeypot presents a self-signed certificate
     ctx.verify_mode = ssl.CERT_NONE
-    ctx.minimum_version = ctx.maximum_version = getattr(ssl.TLSVersion, tls_version)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)  # TLSv1 on purpose
+        ctx.minimum_version = ctx.maximum_version = getattr(ssl.TLSVersion, tls_version)
     ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
     tls = ctx.wrap_socket(s)
     version = tls.version()  # negotiated now; None once the connection is closed

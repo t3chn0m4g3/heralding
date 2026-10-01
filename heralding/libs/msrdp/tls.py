@@ -23,6 +23,7 @@ minimum version is configurable and SECLEVEL is lowered to allow their cipher su
 import asyncio
 import logging
 import ssl
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,11 @@ class TLS:
         self._out = ssl.MemoryBIO()
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         try:
-            ctx.minimum_version = getattr(ssl.TLSVersion, str(min_version))
+            with warnings.catch_warnings():
+                # TLS 1.0/1.1 are deprecated in Python but still spoken by old mstsc clients;
+                # offering them is the point of this honeypot.
+                warnings.simplefilter("ignore", DeprecationWarning)
+                ctx.minimum_version = getattr(ssl.TLSVersion, str(min_version))
         except AttributeError, ValueError:
             ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
