@@ -22,9 +22,7 @@ class CuriosumSink(Sink):
         try:
             import zmq
         except ImportError as exc:
-            raise RuntimeError(
-                "curiosum integration requires 'uv sync --extra curiosum'"
-            ) from exc
+            raise RuntimeError("curiosum integration requires 'uv sync --extra curiosum'") from exc
         self._zmq = zmq
         self._ctx = zmq.Context()
         self._socket = self._ctx.socket(zmq.PUSH)

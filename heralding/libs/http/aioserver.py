@@ -44,9 +44,7 @@ class AsyncBaseHTTPRequestHandler(AsyncBaseRequestHandler, BaseHTTPRequestHandle
         if len(words) == 3:
             command, path, version = words
             if version[:5] != "HTTP/":
-                self.send_error(
-                    HTTPStatus.BAD_REQUEST, "Bad request version ({!r})".format(version)
-                )
+                self.send_error(HTTPStatus.BAD_REQUEST, f"Bad request version ({version!r})")
                 return False
             try:
                 base_version_number = version.split("/", 1)[1]
@@ -55,30 +53,26 @@ class AsyncBaseHTTPRequestHandler(AsyncBaseRequestHandler, BaseHTTPRequestHandle
                     raise ValueError
                 version_number = int(version_number[0]), int(version_number[1])
             except ValueError, IndexError:
-                self.send_error(
-                    HTTPStatus.BAD_REQUEST, "Bad request version ({!r})".format(version)
-                )
+                self.send_error(HTTPStatus.BAD_REQUEST, f"Bad request version ({version!r})")
                 return False
             if version_number >= (1, 1) and self.protocol_version >= "HTTP/1.1":
                 self.close_connection = False
             if version_number >= (2, 0):
                 self.send_error(
                     HTTPStatus.HTTP_VERSION_NOT_SUPPORTED,
-                    "Invalid HTTP Version ({})".format(base_version_number),
+                    f"Invalid HTTP Version ({base_version_number})",
                 )
                 return False
         elif len(words) == 2:
             command, path = words
             self.close_connection = True
             if command != "GET":
-                self.send_error(
-                    HTTPStatus.BAD_REQUEST, "Bad HTTP/0.9 request type ({!r})".format(command)
-                )
+                self.send_error(HTTPStatus.BAD_REQUEST, f"Bad HTTP/0.9 request type ({command!r})")
                 return False
         elif not words:
             return False
         else:
-            self.send_error(HTTPStatus.BAD_REQUEST, "Bad request syntax ({!r})".format(requestline))
+            self.send_error(HTTPStatus.BAD_REQUEST, f"Bad request syntax ({requestline!r})")
             return False
         self.command, self.path, self.request_version = command, path, version
 
@@ -120,9 +114,7 @@ class AsyncBaseHTTPRequestHandler(AsyncBaseRequestHandler, BaseHTTPRequestHandle
             return
         mname = "do_" + self.command
         if not hasattr(self, mname):
-            self.send_error(
-                HTTPStatus.NOT_IMPLEMENTED, "Unsupported method ({!r})".format(self.command)
-            )
+            self.send_error(HTTPStatus.NOT_IMPLEMENTED, f"Unsupported method ({self.command!r})")
             return
         method = getattr(self, mname)
         method()

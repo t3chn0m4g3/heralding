@@ -1,5 +1,3 @@
-import binascii
-
 from Crypto.Cipher import DES
 
 import heralding

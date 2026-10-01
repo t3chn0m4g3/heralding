@@ -1,86 +1,57 @@
-# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 import asyncio
-import unittest
-
-import telnetlib
 
 from heralding.capabilities import telnet
-from heralding.misc.common import cancel_all_pending_tasks
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.tests.conftest import make_options
+
+IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
 
 
-class TelnetTests(unittest.TestCase):
-    def setUp(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(None)
+async def _read_until(reader, writer, needle: bytes, timeout: float = 5.0) -> bytes:
+    """Read until `needle` appears, answering telnet option negotiation with refusals."""
+    data = bytearray()
+    in_sub = False
+    async with asyncio.timeout(timeout):
+        while needle.lower() not in bytes(data).lower():
+            chunk = await reader.read(256)
+            if not chunk:
+                break
+            i = 0
+            while i < len(chunk):
+                b = chunk[i]
+                if b == IAC and i + 1 < len(chunk):
+                    cmd = chunk[i + 1]
+                    if cmd in (DO, DONT, WILL, WONT) and i + 2 < len(chunk):
+                        opt = chunk[i + 2]
+                        writer.write(bytes([IAC, WONT if cmd in (DO, DONT) else DONT, opt]))
+                        i += 3
+                        continue
+                    if cmd == SB:
+                        in_sub = True
+                    elif cmd == SE:
+                        in_sub = False
+                    i += 2
+                    continue
+                if not in_sub:
+                    data.append(b)
+                i += 1
+            await writer.drain()
+    return bytes(data)
 
-        self.reporting_relay = ReportingRelay()
-        self.reporting_relay_task = self.loop.run_in_executor(None, self.reporting_relay.start)
 
-    def tearDown(self):
-        self.reporting_relay.stop()
-        # We give reporting_relay a chance to be finished
-        self.loop.run_until_complete(self.reporting_relay_task)
+async def test_invalid_login(serve, sink):
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
 
-        self.server.close()
-        self.loop.run_until_complete(self.server.wait_closed())
+    prompt = await _read_until(reader, writer, b"Username: ")
+    assert b"Username: " in prompt
+    writer.write(b"someuser\r\n")
+    await writer.drain()
+    prompt = await _read_until(reader, writer, b"Password: ")
+    assert prompt.endswith(b"Password: ")
+    writer.write(b"somepass\r\n")
+    await writer.drain()
 
-        self.loop.run_until_complete(cancel_all_pending_tasks(self.loop))
-        self.loop.close()
-
-    def test_invalid_login(self):
-        """Tests if telnet server responds correctly to a invalid login attempt."""
-
-        def telnet_login():
-            client = telnetlib.Telnet("localhost", 2503)
-            # set this to 1 if having problems with this test
-            client.set_debuglevel(0)
-            # this disables all command negotiation.
-            client.set_option_negotiation_callback(self.cb)
-            # Expect username as first output
-
-            reply = client.read_until(b"Username: ", 1)
-            self.assertEqual(b"Username: ", reply)
-
-            client.write(b"someuser" + b"\r\n")
-            reply = client.read_until(b"Password: ", 5)
-            self.assertTrue(reply.endswith(b"Password: "))
-
-            client.write(b"somepass" + b"\r\n")
-            reply = client.read_until(b"\n", 5)
-            self.assertTrue(b"\n" in reply)
-
-            client.close()
-
-        options = {
-            "enabled": "True",
-            "port": 2503,
-            "protocol_specific_data": {"max_attempts": 3},
-            "users": {"test": "test"},
-        }
-        telnet_cap = telnet.Telnet(options, self.loop)
-
-        server_coro = asyncio.start_server(
-            telnet_cap.handle_session, "0.0.0.0", 2503, loop=self.loop
-        )
-        self.server = self.loop.run_until_complete(server_coro)
-
-        telnet_task = self.loop.run_in_executor(None, telnet_login)
-        self.loop.run_until_complete(telnet_task)
-
-    def cb(self, socket, command, option):
-        return
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
+    assert (attempts[0]["username"], attempts[0]["password"]) == ("someuser", "somepass")
+    writer.close()

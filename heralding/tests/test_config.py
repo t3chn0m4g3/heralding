@@ -1,27 +1,18 @@
-# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-import unittest
+from importlib import resources
+from pathlib import Path
 
 import yaml
 
+FIXTURES = Path(__file__).parent / "fixtures"
 
-class ConfigFileTests(unittest.TestCase):
-    def test_config_file(self):
-        """Tests that the yaml config file is valid YAML"""
-        with open("heralding/heralding.yml") as f:
-            file_content = f.read()
-        # excepts if not valid
-        yaml.safe_load(file_content)
+
+def test_default_config_is_valid_yaml():
+    text = resources.files("heralding").joinpath("heralding.yml").read_text(encoding="utf-8")
+    config = yaml.safe_load(text)
+    assert "capabilities" in config
+
+
+def test_tpot_config_fixture_loads():
+    config = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text(encoding="utf-8"))
+    # T-Pot ships the literal string "None" for unset certificate fields
+    assert config["capabilities"]["pop3s"]["protocol_specific_data"]["cert"]["state"] == "None"

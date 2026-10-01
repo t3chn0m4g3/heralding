@@ -1,63 +1,37 @@
-# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 import asyncio
-import unittest
 
 import asyncssh
+import pytest
 
-from heralding.capabilities.ssh import SSH
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.capabilities import ssh
+from heralding.tests.conftest import make_options
 
 
-class SshTests(unittest.TestCase):
-    def setUp(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(None)
+@pytest.fixture
+async def ssh_server(sink, tmp_path):
+    key = tmp_path / "ssh.key"
+    ssh.SSH.generate_ssh_key(str(key))
+    options = make_options(banner="SSH-2.0-OpenSSH_9.6")
+    server = await asyncssh.create_server(
+        lambda: ssh.SSH(options),
+        "127.0.0.1",
+        0,
+        server_host_keys=[str(key)],
+        login_timeout=5,
+    )
+    host, port = server.sockets[0].getsockname()[:2]
+    yield host, port
+    server.close()
+    await server.wait_closed()
 
-        self.reporting_relay = ReportingRelay()
-        self.reporting_relay_task = self.loop.run_in_executor(None, self.reporting_relay.start)
 
-    def tearDown(self):
-        self.reporting_relay.stop()
-        # We give reporting_relay a chance to be finished
-        self.loop.run_until_complete(self.reporting_relay_task)
-
-        self.server.close()
-        self.loop.run_until_complete(self.server.wait_closed())
-
-        self.loop.close()
-
-    def test_basic_login(self):
-
-        async def run_client():
-            async with asyncssh.connect(
-                "localhost", port=8888, username="johnny", password="secretpw", known_hosts=None
-            ) as _:
-                pass
-
-        ssh_key_file = "ssh.key"
-        SSH.generate_ssh_key(ssh_key_file)
-
-        options = {"enabled": "True", "port": 8888}
-        server_coro = asyncssh.create_server(
-            lambda: SSH(options, self.loop), "0.0.0.0", 8888, server_host_keys=["ssh.key"]
-        )
-        self.server = self.loop.run_until_complete(server_coro)
-
-        try:
-            self.loop.run_until_complete(run_client())
-        except asyncssh.misc.PermissionDenied:
+async def test_basic_login(ssh_server, sink):
+    host, port = ssh_server
+    with pytest.raises(asyncssh.PermissionDenied):
+        async with asyncssh.connect(
+            host, port, username="johnny", password="secretpw", known_hosts=None
+        ):
             pass
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
+    assert (attempts[0]["username"], attempts[0]["password"]) == ("johnny", "secretpw")
+    assert attempts[0]["protocol"] == "ssh"

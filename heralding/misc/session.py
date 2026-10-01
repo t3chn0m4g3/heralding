@@ -18,7 +18,6 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-import heralding.honeypot
 from heralding.reporting.hub import get_hub
 
 logger = logging.getLogger(__name__)
@@ -33,6 +32,8 @@ class Session:
         self.source_ip = source_ip
         self.source_port = source_port
         self.protocol = protocol
+        import heralding.honeypot  # local import: honeypot imports the capabilities, which import us
+
         if heralding.honeypot.Honeypot.public_ip:
             self.destination_ip = heralding.honeypot.Honeypot.public_ip
         else:

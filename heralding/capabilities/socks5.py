@@ -35,7 +35,7 @@ class Socks5(HandlerBase):
         if len(greeting) > 2:
             await self.try_authenticate(reader, writer, session, greeting)
         else:
-            logger.debug("Incorrect client greeting string: %r" % greeting)
+            logger.debug(f"Incorrect client greeting string: {greeting!r}")
         session.end_session()
 
     async def try_authenticate(self, reader, writer, session, greeting):
@@ -48,7 +48,7 @@ class Socks5(HandlerBase):
                 await writer.drain()
             session.set_auxiliary_data(self.get_auxiliary_data(authmethods))
         else:
-            logger.debug("Wrong socks version: %r" % version)
+            logger.debug(f"Wrong socks version: {version!r}")
 
     async def do_authenticate(self, reader, writer, session):
         writer.write(SOCKS_VERSION + AUTH_METHOD)
@@ -63,7 +63,7 @@ class Socks5(HandlerBase):
             writer.write(AUTH_METHOD + SOCKS_FAIL)
             await writer.drain()
         else:
-            logger.debug("Wrong authentication data: %r" % auth_data)
+            logger.debug(f"Wrong authentication data: {auth_data!r}")
 
     def get_auxiliary_data(self, authmethods):
         _methods = []
@@ -75,9 +75,9 @@ class Socks5(HandlerBase):
             elif m == 1:
                 _methods.append("GSSAPI")
             elif 3 <= m <= 127:
-                _methods.append("IANA ASSIGNED(%s)" % hex(m))
+                _methods.append(f"IANA ASSIGNED({hex(m)})")
             elif 128 <= m <= 254:
-                _methods.append("PRIVATE METHOD(%s)" % hex(m))
+                _methods.append(f"PRIVATE METHOD({hex(m)})")
             elif m == 255:
                 _methods.append("NO ACCEPTABLE METHODS")
 

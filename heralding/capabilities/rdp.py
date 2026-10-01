@@ -139,7 +139,7 @@ class RDP(HandlerBase):
                 channel_cnf = MCSChannelJoinConfirmPDU(channel_init, channel_id).getFullPacket()
 
                 await self.send_data(writer, channel_cnf, tls_obj)
-                logger.debug("Sent: MCS Channel Join Confirm of channel %s" % (channel_id))
+                logger.debug(f"Sent: MCS Channel Join Confirm of channel {channel_id}")
 
             # Handle Client Security Exchange PDU
             if not data:
