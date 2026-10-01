@@ -81,6 +81,8 @@ class HTTPHandler(AsyncBaseHTTPRequestHandler):
 
 
 class Http(HandlerBase):
+    NAME = "http"
+
     def __init__(self, options):
         super().__init__(options)
         self._options = options

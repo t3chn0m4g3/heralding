@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class Socks5(HandlerBase):
+    NAME = "socks5"
+
     async def execute_capability(self, reader, writer, session):
         await self._handle_session(reader, writer, session)
 

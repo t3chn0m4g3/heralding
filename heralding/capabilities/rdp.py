@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 
 class RDP(HandlerBase):
+    NAME = "rdp"
+    NEEDS_CERT = True  # TLS is negotiated inside the RDP flow (libs/msrdp/tls.py)
+
     # will parse the TPKT header and read the entire packet (TPKT + payload)
     async def recv_next_tpkt(self, reader, tlsObj=None):
         # data buffer

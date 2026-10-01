@@ -15,13 +15,13 @@
 
 import logging
 
-from heralding.capabilities.handlerbase import HandlerBase
 from heralding.capabilities.http import Http
 
 logger = logging.getLogger(__name__)
 
 
-class https(Http, HandlerBase):
-    """
-    This class will get wrapped in SSL. This is possible because we by convention wrap
-    all capabilities that ends with the letter 's' in SSL."""
+class https(Http):
+    """Http wrapped in implicit TLS (see HandlerBase.TLS)."""
+
+    NAME = "https"
+    TLS = "implicit"

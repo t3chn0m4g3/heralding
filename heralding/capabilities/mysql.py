@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 # Implemented according to https://dev.mysql.com/doc/internals/en/connection-phase-packets.html
 class MySQL(HandlerBase):
+    NAME = "mysql"
+
     def __init__(self, options):
         super().__init__(options)
         self.PROTO_VER = b"\x0a"

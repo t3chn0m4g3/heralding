@@ -13,7 +13,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import functools
 import logging
 import os
 
@@ -26,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class SSH(asyncssh.SSHServer, HandlerBase):
+    NAME = "ssh"
     connections_list = []
 
     def __init__(self, options):
@@ -73,27 +73,19 @@ class SSH(asyncssh.SSHServer, HandlerBase):
         data = {f: self.connection.get_extra_info(f) for f in data_fields}
         return data
 
-    @staticmethod
-    def change_server_banner(banner):
-        """_send_version code was copied from asyncssh.connection in order to change
-        internal local variable 'version', providing custom banner."""
-
-        @functools.wraps(asyncssh.connection.SSHConnection._send_version)
-        def _send_version(self):
-            """Start the SSH handshake"""
-
-            version = bytes(banner, "utf-8")
-
-            if self.is_client():
-                self._client_version = version
-                self._extra.update(client_version=version.decode("ascii"))
-            else:
-                self._server_version = version
-                self._extra.update(server_version=version.decode("ascii"))
-
-            self._send(version + b"\r\n")
-
-        asyncssh.connection.SSHConnection._send_version = _send_version
+    async def create_server(self, bind_host, port, ssl_context=None):
+        key_file = "ssh.key"
+        self.generate_ssh_key(key_file)
+        options = self.options
+        banner = options["protocol_specific_data"]["banner"]
+        return await asyncssh.create_server(
+            lambda: type(self)(options),
+            bind_host,
+            port,
+            server_host_keys=[key_file],
+            login_timeout=self.timeout,
+            server_version=banner.removeprefix("SSH-2.0-"),
+        )
 
     @staticmethod
     def generate_ssh_key(ssh_key_file):

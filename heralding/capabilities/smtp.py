@@ -190,6 +190,8 @@ class SMTPHandler(SMTP):
 
 
 class smtp(HandlerBase):
+    NAME = "smtp"
+
     def __init__(self, options):
         super().__init__(options)
         self._options = options

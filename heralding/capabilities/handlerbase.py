@@ -15,6 +15,7 @@
 
 import asyncio
 import logging
+import ssl
 
 from heralding.misc.session import Session
 
@@ -22,8 +23,32 @@ logger = logging.getLogger(__name__)
 
 
 class HandlerBase:
+    NAME: str = ""  # protocol name as logged; part of the T-Pot contract for existing services
+    TLS: str | None = None  # "implicit" | "starttls" | None
+    TRANSPORT: str = "tcp"  # "tcp" | "udp"
+    NEEDS_CERT: bool = False  # capability handles TLS itself but needs <NAME>.pem in CWD
+    _registry: dict[str, type["HandlerBase"]] = {}
     MAX_GLOBAL_SESSIONS = 800
     global_sessions = 0
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if cls.NAME:
+            HandlerBase._registry[cls.NAME] = cls
+
+    @classmethod
+    def registry(cls) -> dict[str, type["HandlerBase"]]:
+        return dict(cls._registry)
+
+    async def create_server(self, bind_host, port, ssl_context: ssl.SSLContext | None = None):
+        return await asyncio.start_server(
+            self.handle_session,
+            bind_host,
+            port,
+            ssl=ssl_context,
+            limit=16 * 1024,
+            ssl_handshake_timeout=self.timeout if ssl_context else None,
+        )
 
     def __init__(self, options):
         """
@@ -42,7 +67,7 @@ class HandlerBase:
             self.timeout = 30
 
     def create_session(self, address, dest_address):
-        protocol = self.__class__.__name__.lower()
+        protocol = self.NAME
         session = Session(
             address[0], address[1], protocol, self.users, dest_address[1], dest_address[0]
         )
@@ -80,7 +105,7 @@ class HandlerBase:
         dest_address = writer.get_extra_info("sockname")
 
         if HandlerBase.global_sessions > HandlerBase.MAX_GLOBAL_SESSIONS:
-            protocol = self.__class__.__name__.lower()
+            protocol = self.NAME
             logger.warning(
                 "Got %s session on port %s from %s:%s, but not handling it because the global session limit has "
                 "been reached",

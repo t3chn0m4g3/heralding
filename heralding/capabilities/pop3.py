@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class Pop3(HandlerBase):
+    NAME = "pop3"
     max_tries = 10
     cmds = {}
 

@@ -25,6 +25,8 @@ CRLF = "\r\n"
 
 
 class Imap(HandlerBase):
+    NAME = "imap"
+
     def __init__(self, options):
         super().__init__(options)
         self.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])

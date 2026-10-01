@@ -18,10 +18,10 @@ import logging
 import os
 import ssl
 
-import asyncssh
-
-import heralding.capabilities.handlerbase
+import heralding.capabilities  # noqa: F401  registers all capabilities
 import heralding.misc.common as common
+from heralding.capabilities import ssh
+from heralding.capabilities.handlerbase import HandlerBase
 from heralding.reporting.hub import get_hub
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,6 @@ class Honeypot:
         :param config: configuration dictionary.
         """
         assert config is not None
-        self.SshClass = None
         self.config = config
         self._servers = []
         self.public_ip_task = None
@@ -76,67 +75,33 @@ class Honeypot:
 
         bind_host = self.config["bind_host"]
         listen_ports = []
-        for c in heralding.capabilities.handlerbase.HandlerBase.__subclasses__():
-            cap_name = c.__name__.lower()
-            if cap_name not in self.config["capabilities"]:
+        for cap_name, cls in HandlerBase.registry().items():
+            cap_cfg = self.config["capabilities"].get(cap_name)
+            if not cap_cfg or not cap_cfg.get("enabled"):
                 continue
-            if not self.config["capabilities"][cap_name]["enabled"]:
-                continue
-            port = self.config["capabilities"][cap_name]["port"]
-            listen_ports.append(port)
-            # carve out the options for this specific service
-            options = self.config["capabilities"][cap_name]
-            # capabilities are only allowed to append to the session list
-            cap = c(options)
-            try:
-                # Convention: All capability names which end in 's' will be wrapped in ssl.
-                if cap_name.endswith("s"):
-                    pem_file = f"{cap_name}.pem"
-                    self.create_cert_if_not_exists(cap_name, pem_file)
+            port = int(cap_cfg["port"])
+            cap = cls(cap_cfg)
+            ssl_context = None
+            if cls.TLS == "implicit" or cls.NEEDS_CERT:
+                pem_file = f"{cap_name}.pem"
+                self.create_cert_if_not_exists(cap_name, pem_file)
+                if cls.TLS == "implicit":
                     ssl_context = self.create_ssl_context(pem_file)
-                    server = await asyncio.start_server(
-                        cap.handle_session, bind_host, port, ssl=ssl_context
-                    )
-                elif cap_name == "ssh":
-                    # Since dicts and user-defined classes are mutable, we have
-                    # to save ssh class and ssh options somewhere.
-                    ssh_options = options
-                    SshClass = c
-                    self.SshClass = SshClass
-
-                    ssh_key_file = "ssh.key"
-                    SshClass.generate_ssh_key(ssh_key_file)
-
-                    banner = ssh_options["protocol_specific_data"]["banner"]
-                    SshClass.change_server_banner(banner)
-
-                    server = await asyncssh.create_server(
-                        lambda: SshClass(ssh_options),  # noqa: B023
-                        bind_host,
-                        port,
-                        server_host_keys=[ssh_key_file],
-                        login_timeout=cap.timeout,
-                    )
-                elif cap_name == "rdp":
-                    pem_file = f"{cap_name}.pem"
-                    self.create_cert_if_not_exists(cap_name, pem_file)
-                    server = await asyncio.start_server(cap.handle_session, bind_host, port)
-                else:
-                    server = await asyncio.start_server(cap.handle_session, bind_host, port)
-
-                logger.debug("Adding %s capability with options: %s", cap_name, options)
-                self._servers.append(server)
-            except Exception as ex:
+            try:
+                server = await cap.create_server(bind_host, port, ssl_context)
+            except OSError as exc:
                 logger.error(
-                    "Could not start %s server on port %s [%s] %s",
-                    c.__name__,
+                    "Could not start %s on port %s [%s] %s",
+                    cap_name,
                     port,
-                    type(ex).__name__,
-                    ex,
+                    type(exc).__name__,
+                    exc,
                 )
                 raise
-            else:
-                logger.info("Started %s capability listening on port %s", c.__name__, port)
+            logger.debug("Adding %s capability with options: %s", cap_name, cap_cfg)
+            self._servers.append(server)
+            listen_ports.append(port)
+            logger.info("Started %s capability listening on port %s", cap_name, port)
         get_hub().emit_listen_ports(listen_ports)
 
     async def stop(self):
@@ -144,10 +109,9 @@ class Honeypot:
         if self.public_ip_task is not None:
             self.public_ip_task.cancel()
 
-        if self.SshClass is not None:
-            for conn in list(self.SshClass.connections_list):
-                conn.close()
-                await conn.wait_closed()
+        for conn in list(ssh.SSH.connections_list):
+            conn.close()
+            await conn.wait_closed()
 
         for server in self._servers:
             server.close()

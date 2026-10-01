@@ -7,6 +7,8 @@ logger = logging.getLogger(__name__)
 
 
 class PostgreSQL(HandlerBase):
+    NAME = "postgresql"
+
     async def execute_capability(self, reader, writer, session):
         try:
             await self._handle_session(session, reader, writer)

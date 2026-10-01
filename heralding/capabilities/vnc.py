@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 class Vnc(HandlerBase):
+    NAME = "vnc"
+
     async def execute_capability(self, reader, writer, session):
         await self._handle_session(reader, writer, session)
 

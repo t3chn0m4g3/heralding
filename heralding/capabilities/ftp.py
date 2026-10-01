@@ -114,6 +114,8 @@ class FtpHandler:
 
 
 class ftp(HandlerBase):
+    NAME = "ftp"
+
     def __init__(self, options):
         super().__init__(options)
         self._options = options
