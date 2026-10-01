@@ -39,7 +39,7 @@ async def cancel_all_pending_tasks(grace_seconds: float = 5.0) -> None:
 def _fetch_text(url: str, timeout: float) -> str:
     if not url.startswith("https://"):
         raise ValueError("only https endpoints are allowed")
-    req = urllib.request.Request(url, headers={"User-Agent": "curl/8.5.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "curl/8.5.0"})  # noqa: S310
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return resp.read(64).decode("ascii", "replace")
 

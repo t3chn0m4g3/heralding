@@ -16,18 +16,17 @@
 import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
 
 
 class Pop3(HandlerBase):
     NAME = "pop3"
-    max_tries = 10
-    cmds = {}
 
     def __init__(self, options):
         super().__init__(options)
-        Pop3.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
+        self.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
         self.banner = self.options["protocol_specific_data"]["banner"]
 
     async def execute_capability(self, reader, writer, session):
@@ -42,7 +41,7 @@ class Pop3(HandlerBase):
             if not raw_msg:
                 break
 
-            raw_msg_str = str(raw_msg, "utf-8")
+            raw_msg_str = decode_lossless(raw_msg)
 
             session.activity()
             cmd_msg = raw_msg_str.rstrip().split(" ", 1)
@@ -93,6 +92,8 @@ class Pop3(HandlerBase):
 
         if "USER" in session.vdata:
             del session.vdata["USER"]
+        if session.get_number_of_login_attempts() >= self.max_tries:
+            return ""  # leaves the command loop; the session is closed by the caller
         return "AUTHORIZATION"
 
     async def cmd_noop(self, session, reader, writer, msg):

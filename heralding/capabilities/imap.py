@@ -18,6 +18,7 @@ import binascii
 import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class Imap(HandlerBase):
             if not raw_msg:
                 break
 
-            raw_msg_str = str(raw_msg, "utf-8")
+            raw_msg_str = decode_lossless(raw_msg)
 
             cmd_msg = raw_msg_str.rstrip().split(" ", 2)
             if len(cmd_msg) == 0:
@@ -149,7 +150,7 @@ class Imap(HandlerBase):
         return "Not Authenticated"
 
     def stop_if_too_many_attempts(self, session):
-        if self.max_tries < session.get_number_of_login_attempts():
+        if session.get_number_of_login_attempts() >= self.max_tries:
             session.end_session()
 
     @staticmethod

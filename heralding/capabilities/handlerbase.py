@@ -44,7 +44,7 @@ class HandlerBase:
     TLS: str | None = None  # "implicit" | "starttls" | None
     TRANSPORT: str = "tcp"  # "tcp" | "udp"
     NEEDS_CERT: bool = False  # capability handles TLS itself but needs <NAME>.pem in CWD
-    _registry: dict[str, type["HandlerBase"]] = {}
+    _registry: dict[str, type[HandlerBase]] = {}
 
     max_sessions = 800
     max_sessions_per_ip = 50
@@ -59,7 +59,7 @@ class HandlerBase:
             HandlerBase._registry[cls.NAME] = cls
 
     @classmethod
-    def registry(cls) -> dict[str, type["HandlerBase"]]:
+    def registry(cls) -> dict[str, type[HandlerBase]]:
         return dict(cls._registry)
 
     @classmethod

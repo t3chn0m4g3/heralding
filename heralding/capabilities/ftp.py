@@ -24,6 +24,7 @@
 import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class FtpHandler:
 
     async def getcmd(self):
         cmd = await self.reader.readline()
-        return str(cmd, "utf-8")
+        return decode_lossless(cmd)
 
     async def serve(self):
         await self.respond("220 " + self.banner)
@@ -93,6 +94,7 @@ class FtpHandler:
         self.session.add_auth_attempt("plaintext", username=self.user, password=passwd)
         await self.respond("530 Authentication Failed.")
         if self.session.get_number_of_login_attempts() >= self.max_loggins:
+            self.serve_flag = False
             self.stop()
 
     async def do_SYST(self, arg):

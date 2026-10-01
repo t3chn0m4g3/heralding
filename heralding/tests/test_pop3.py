@@ -32,3 +32,25 @@ async def test_login(serve, sink):
 
     attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
     assert (attempts[0]["username"], attempts[0]["password"]) == ("wakkwakk", "wakkwakk")
+
+
+async def test_pop3_enforces_max_attempts(serve, sink):
+    cap = Pop3(make_options(max_attempts=2, banner="+OK"))
+    host, port = await serve(cap)
+    reader, writer = await asyncio.open_connection(host, port)
+    await reader.readline()
+    for _ in range(2):
+        writer.write(b"USER u\r\n")
+        await writer.drain()
+        await reader.readline()
+        writer.write(b"PASS p\r\n")
+        await writer.drain()
+        assert (await reader.readline()).startswith(b"-ERR")
+    assert await asyncio.wait_for(reader.read(), 5) == b""
+    writer.close()
+
+
+async def test_pop3_max_attempts_is_per_instance(serve, sink):
+    two = Pop3(make_options(max_attempts=2, banner="+OK"))
+    five = Pop3(make_options(max_attempts=5, banner="+OK"))
+    assert (two.max_tries, five.max_tries) == (2, 5)
