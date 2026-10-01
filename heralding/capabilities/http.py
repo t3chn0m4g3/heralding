@@ -29,66 +29,63 @@ logger = logging.getLogger(__name__)
 
 
 class HTTPHandler(AsyncBaseHTTPRequestHandler):
+    def __init__(self, reader, writer, httpsession, options):
+        self._options = options
+        if "banner" in self._options:
+            self._banner = self._options["banner"]
+        else:
+            self._banner = "Microsoft-IIS/5.0"
+        self._session = httpsession
+        address = writer.get_extra_info("address")
+        super().__init__(reader, writer, address)
 
-  def __init__(self, reader, writer, httpsession, options):
-    self._options = options
-    if 'banner' in self._options:
-      self._banner = self._options['banner']
-    else:
-      self._banner = 'Microsoft-IIS/5.0'
-    self._session = httpsession
-    address = writer.get_extra_info('address')
-    super().__init__(reader, writer, address)
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
 
-  def do_HEAD(self):
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
+    def do_AUTHHEAD(self):
+        self.send_response(401)
+        # TODO: Value for basic realm...
+        self.send_header("WWW-Authenticate", 'Basic realm=""')
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
 
-  def do_AUTHHEAD(self):
-    self.send_response(401)
-    # TODO: Value for basic realm...
-    self.send_header('WWW-Authenticate', 'Basic realm=\"\"')
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
+    def do_GET(self):
+        if self.headers["Authorization"] is None:
+            self.do_AUTHHEAD()
+        else:
+            hdr = self.headers["Authorization"]
+            _, enc_uname_pwd = hdr.split(" ")
+            dec_uname_pwd = str(base64.b64decode(enc_uname_pwd), "utf-8")
+            pos = dec_uname_pwd.find(":")
+            uname, pwd = dec_uname_pwd[:pos], dec_uname_pwd[pos + 1 : len(dec_uname_pwd)]
+            self._session.add_auth_attempt("plaintext", username=uname, password=pwd)
+            self.do_AUTHHEAD()
+            headers_bytes = bytes(self.headers["Authorization"], "utf-8")
+            self.wfile.write(headers_bytes)
+            self.wfile.write(b"not authenticated")
+            aux_data = self.get_auxiliary_info()
+            self._session.set_auxiliary_data(aux_data)
+            # Disable logging provided by BaseHTTPServer
 
-  def do_GET(self):
-    if self.headers['Authorization'] is None:
-      self.do_AUTHHEAD()
-    else:
-      hdr = self.headers['Authorization']
-      _, enc_uname_pwd = hdr.split(' ')
-      dec_uname_pwd = str(base64.b64decode(enc_uname_pwd), 'utf-8')
-      pos = dec_uname_pwd.find(':')
-      uname, pwd = dec_uname_pwd[:pos], dec_uname_pwd[pos +
-                                                      1:len(dec_uname_pwd)]
-      self._session.add_auth_attempt('plaintext', username=uname, password=pwd)
-      self.do_AUTHHEAD()
-      headers_bytes = bytes(self.headers['Authorization'], 'utf-8')
-      self.wfile.write(headers_bytes)
-      self.wfile.write(b'not authenticated')
-      aux_data = self.get_auxiliary_info()
-      self._session.set_auxiliary_data(aux_data)
-      # Disable logging provided by BaseHTTPServer
-  def log_message(self, format_, *args):
-    pass
+    def log_message(self, format_, *args):
+        pass
 
-  def get_auxiliary_info(self):
-    data = {}
-    for field in self.headers.keys():
-      data.update({str(field): str(self.headers[str(field)])})
+    def get_auxiliary_info(self):
+        data = {}
+        for field in self.headers.keys():
+            data.update({str(field): str(self.headers[str(field)])})
 
-    return data
+        return data
 
 
 class Http(HandlerBase):
+    def __init__(self, options):
+        super().__init__(options)
+        self._options = options
 
-  def __init__(self, options):
-    super().__init__(options)
-    self._options = options
-
-  async def execute_capability(self, reader, writer, session):
-    http_cap = HTTPHandler(
-        reader, writer, httpsession=session, options=self._options)
-    await http_cap.run()
-    session.end_session()
+    async def execute_capability(self, reader, writer, session):
+        http_cap = HTTPHandler(reader, writer, httpsession=session, options=self._options)
+        await http_cap.run()
+        session.end_session()

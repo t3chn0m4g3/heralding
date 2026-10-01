@@ -4,25 +4,25 @@
 
 
 class AsyncBaseRequestHandler:
-  """Asynchronous analogue of socketserver.BaseRequestHandler."""
+    """Asynchronous analogue of socketserver.BaseRequestHandler."""
 
-  def __init__(self, reader, writer, client_address):
-    self.rfile = reader
-    self.wfile = writer
-    self.client_address = client_address
+    def __init__(self, reader, writer, client_address):
+        self.rfile = reader
+        self.wfile = writer
+        self.client_address = client_address
 
-  async def run(self):
-    self.setup()
-    try:
-      await self.handle()
-    finally:
-      self.finish()
+    async def run(self):
+        self.setup()
+        try:
+            await self.handle()
+        finally:
+            self.finish()
 
-  def setup(self):
-    pass
+    def setup(self):
+        pass
 
-  async def handle(self):
-    pass
+    async def handle(self):
+        pass
 
-  def finish(self):
-    pass
+    def finish(self):
+        pass

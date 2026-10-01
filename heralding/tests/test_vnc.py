@@ -13,61 +13,59 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
 import asyncio
+import os
 import unittest
 
-from heralding.capabilities.vnc import Vnc, RFB_VERSION, VNC_AUTH
+from heralding.capabilities.vnc import RFB_VERSION, VNC_AUTH, Vnc
 from heralding.reporting.reporting_relay import ReportingRelay
 
 
 class VncTests(unittest.TestCase):
+    def setUp(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(None)
 
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
+        self.reporting_relay = ReportingRelay()
+        self.reporting_relay_task = self.loop.run_in_executor(None, self.reporting_relay.start)
 
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
+    def tearDown(self):
+        self.reporting_relay.stop()
+        # We give reporting_relay a chance to be finished
+        self.loop.run_until_complete(self.reporting_relay_task)
 
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
+        self.server.close()
+        self.loop.run_until_complete(self.server.wait_closed())
 
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
+        self.loop.close()
 
-    self.loop.close()
+    def test_vnc_authentication(self):
 
-  def test_vnc_authentication(self):
+        async def vnc_auth():
+            reader, writer = await asyncio.open_connection("127.0.0.1", 8888, loop=self.loop)
+            # server rfb version
+            _ = await reader.readline()
+            writer.write(RFB_VERSION)
 
-    async def vnc_auth():
-      reader, writer = await asyncio.open_connection(
-          '127.0.0.1', 8888, loop=self.loop)
-      # server rfb version
-      _ = await reader.readline()
-      writer.write(RFB_VERSION)
+            # available auth methods
+            _ = await reader.read(1024)
+            writer.write(VNC_AUTH)
 
-      # available auth methods
-      _ = await reader.read(1024)
-      writer.write(VNC_AUTH)
+            # challenge
+            _ = await reader.read(1024)
+            # Pretending, that we encrypt received challenge with DES and send back the result.
+            client_response = os.urandom(16)
+            writer.write(client_response)
 
-      # challenge
-      _ = await reader.read(1024)
-      # Pretending, that we encrypt received challenge with DES and send back the result.
-      client_response = os.urandom(16)
-      writer.write(client_response)
+            # security result
+            _ = await reader.read(1024)
 
-      # security result
-      _ = await reader.read(1024)
+        options = {"enabled": "True", "port": 8888, "timeout": 30}
+        capability = Vnc(options, self.loop)
 
-    options = {'enabled': 'True', 'port': 8888, 'timeout': 30}
-    capability = Vnc(options, self.loop)
+        server_coro = asyncio.start_server(
+            capability.handle_session, "0.0.0.0", 8888, loop=self.loop
+        )
+        self.server = self.loop.run_until_complete(server_coro)
 
-    server_coro = asyncio.start_server(
-        capability.handle_session, '0.0.0.0', 8888, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
-
-    self.loop.run_until_complete(vnc_auth())
+        self.loop.run_until_complete(vnc_auth())

@@ -20,6 +20,7 @@ from heralding.misc.session import Session
 
 logger = logging.getLogger(__name__)
 
+
 class HandlerBase:
     MAX_GLOBAL_SESSIONS = 800
     global_sessions = 0
@@ -34,27 +35,33 @@ class HandlerBase:
         self.sessions = {}
         self.users = {}
 
-        self.port = int(options['port'])
-        if 'timeout' in options:
-            self.timeout = options['timeout']
+        self.port = int(options["port"])
+        if "timeout" in options:
+            self.timeout = options["timeout"]
         else:
             self.timeout = 30
 
     def create_session(self, address, dest_address):
         protocol = self.__class__.__name__.lower()
-        session = Session(address[0], address[1], protocol, self.users,
-                          dest_address[1], dest_address[0])
+        session = Session(
+            address[0], address[1], protocol, self.users, dest_address[1], dest_address[0]
+        )
         self.sessions[session.id] = session
         HandlerBase.global_sessions += 1
-        logger.debug('Accepted %s session on %s:%s from %s:%s. (%s)', protocol,
-                     dest_address[0], dest_address[1], address[0], address[1],
-                     str(session.id))
-        logger.debug('Size of session list for %s: %s', protocol,
-                     len(self.sessions))
+        logger.debug(
+            "Accepted %s session on %s:%s from %s:%s. (%s)",
+            protocol,
+            dest_address[0],
+            dest_address[1],
+            address[0],
+            address[1],
+            str(session.id),
+        )
+        logger.debug("Size of session list for %s: %s", protocol, len(self.sessions))
         return session
 
     def close_session(self, session):
-        logger.debug('Closing session. (%s)', str(session.id))
+        logger.debug("Closing session. (%s)", str(session.id))
         session.end_session()
         if session.id in self.sessions:
             del self.sessions[session.id]
@@ -69,26 +76,31 @@ class HandlerBase:
         raise Exception("Must be implemented by child")
 
     async def handle_session(self, reader, writer):
-        address = writer.get_extra_info('peername')
-        dest_address = writer.get_extra_info('sockname')
+        address = writer.get_extra_info("peername")
+        dest_address = writer.get_extra_info("sockname")
 
         if HandlerBase.global_sessions > HandlerBase.MAX_GLOBAL_SESSIONS:
             protocol = self.__class__.__name__.lower()
             logger.warning(
-                'Got %s session on port %s from %s:%s, but not handling it because the global session limit has '
-                'been reached', protocol, self.port, *address)
+                "Got %s session on port %s from %s:%s, but not handling it because the global session limit has "
+                "been reached",
+                protocol,
+                self.port,
+                *address,
+            )
         else:
             session = self.create_session(address, dest_address)
             try:
                 await asyncio.wait_for(
-                    self.execute_capability(reader, writer, session),
-                    timeout=self.timeout)
-            except asyncio.TimeoutError:
-                logger.debug('Session timed out. (%s)', session.id)
+                    self.execute_capability(reader, writer, session), timeout=self.timeout
+                )
+            except TimeoutError:
+                logger.debug("Session timed out. (%s)", session.id)
             except (BrokenPipeError, ConnectionError) as err:
-                logger.debug('Unexpected end of session: %s, errno: %s. (%s)', err,
-                             err.errno, session.id)
-            except (UnicodeDecodeError, KeyboardInterrupt):
+                logger.debug(
+                    "Unexpected end of session: %s, errno: %s. (%s)", err, err.errno, session.id
+                )
+            except UnicodeDecodeError, KeyboardInterrupt:
                 pass
             finally:
                 self.close_session(session)

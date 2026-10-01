@@ -16,55 +16,48 @@
 import asyncio
 import unittest
 
+import asyncssh
+
 from heralding.capabilities.ssh import SSH
 from heralding.reporting.reporting_relay import ReportingRelay
 
-import asyncssh
-
 
 class SshTests(unittest.TestCase):
+    def setUp(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(None)
 
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
+        self.reporting_relay = ReportingRelay()
+        self.reporting_relay_task = self.loop.run_in_executor(None, self.reporting_relay.start)
 
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
+    def tearDown(self):
+        self.reporting_relay.stop()
+        # We give reporting_relay a chance to be finished
+        self.loop.run_until_complete(self.reporting_relay_task)
 
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
+        self.server.close()
+        self.loop.run_until_complete(self.server.wait_closed())
 
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
+        self.loop.close()
 
-    self.loop.close()
+    def test_basic_login(self):
 
-  def test_basic_login(self):
+        async def run_client():
+            async with asyncssh.connect(
+                "localhost", port=8888, username="johnny", password="secretpw", known_hosts=None
+            ) as _:
+                pass
 
-    async def run_client():
-      async with asyncssh.connect(
-          'localhost',
-          port=8888,
-          username='johnny',
-          password='secretpw',
-          known_hosts=None) as _:
-        pass
+        ssh_key_file = "ssh.key"
+        SSH.generate_ssh_key(ssh_key_file)
 
-    ssh_key_file = 'ssh.key'
-    SSH.generate_ssh_key(ssh_key_file)
+        options = {"enabled": "True", "port": 8888}
+        server_coro = asyncssh.create_server(
+            lambda: SSH(options, self.loop), "0.0.0.0", 8888, server_host_keys=["ssh.key"]
+        )
+        self.server = self.loop.run_until_complete(server_coro)
 
-    options = {'enabled': 'True', 'port': 8888}
-    server_coro = asyncssh.create_server(
-        lambda: SSH(options, self.loop),
-        '0.0.0.0',
-        8888,
-        server_host_keys=['ssh.key'])
-    self.server = self.loop.run_until_complete(server_coro)
-
-    try:
-      self.loop.run_until_complete(run_client())
-    except asyncssh.misc.PermissionDenied:
-      pass
+        try:
+            self.loop.run_until_complete(run_client())
+        except asyncssh.misc.PermissionDenied:
+            pass

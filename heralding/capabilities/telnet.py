@@ -25,67 +25,63 @@ logger = logging.getLogger(__name__)
 
 
 class Telnet(HandlerBase):
+    def __init__(self, options):
+        super().__init__(options)
+        TelnetWrapper.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
 
-  def __init__(self, options):
-    super().__init__(options)
-    TelnetWrapper.max_tries = int(
-        self.options['protocol_specific_data']['max_attempts'])
-
-  async def execute_capability(self, reader, writer, session):
-    telnet_cap = TelnetWrapper(reader, writer, session)
-    await telnet_cap.run()
+    async def execute_capability(self, reader, writer, session):
+        telnet_cap = TelnetWrapper(reader, writer, session)
+        await telnet_cap.run()
 
 
 class TelnetWrapper(TelnetHandlerBase):
-  """
+    """
     Wraps the telnetsrv module to fit the Honeypot architecture.
     """
-  PROMPT = b'$ '
-  max_tries = 3
-  TERM = 'ansi'
 
-  authNeedUser = True
-  authNeedPass = True
+    PROMPT = b"$ "
+    max_tries = 3
+    TERM = "ansi"
 
-  def __init__(self, reader, writer, session):
-    self.auth_count = 0
-    self.username = None
-    self.session = session
-    address = writer.get_extra_info('address')
-    loop = asyncio.get_running_loop()
-    super().__init__(reader, writer, address, loop=loop)
+    authNeedUser = True
+    authNeedPass = True
 
-  async def authentication_ok(self):
-    while self.auth_count < TelnetWrapper.max_tries:
-      username = await self.readline(prompt=b"Username: ", use_history=False)
-      password = await self.readline(
-          echo=False, prompt=b"Password: ", use_history=False)
-      self.session.add_auth_attempt(
-          _type='plaintext',
-          username=str(username, 'utf-8'),
-          password=str(password, 'utf-8'))
-      if self.DOECHO:
-        self.write(b"\n")
-      self.auth_count += 1
-    self.writeline(b'Username: ')  # It fixes a problem with Hydra bruteforcer.
-    return False
+    def __init__(self, reader, writer, session):
+        self.auth_count = 0
+        self.username = None
+        self.session = session
+        address = writer.get_extra_info("address")
+        loop = asyncio.get_running_loop()
+        super().__init__(reader, writer, address, loop=loop)
 
-  def setterm(self, term):
-    # Dummy file for the purpose of tests.
-    with open('/dev/null', 'w') as f:
-      curses.setupterm(
-          term, f.fileno())  # This will raise if the termtype is not supported
-      self.TERM = term
-      self.ESCSEQ = {}
-      for k in self.KEYS.keys():
-        str_ = curses.tigetstr(curses.has_key._capability_names[k])
-        if str_:
-          self.ESCSEQ[str_] = k
-      self.CODES['DEOL'] = curses.tigetstr('el')
-      self.CODES['DEL'] = curses.tigetstr('dch1')
-      self.CODES['INS'] = curses.tigetstr('ich1')
-      self.CODES['CSRLEFT'] = curses.tigetstr('cub1')
-      self.CODES['CSRRIGHT'] = curses.tigetstr('cuf1')
+    async def authentication_ok(self):
+        while self.auth_count < TelnetWrapper.max_tries:
+            username = await self.readline(prompt=b"Username: ", use_history=False)
+            password = await self.readline(echo=False, prompt=b"Password: ", use_history=False)
+            self.session.add_auth_attempt(
+                _type="plaintext", username=str(username, "utf-8"), password=str(password, "utf-8")
+            )
+            if self.DOECHO:
+                self.write(b"\n")
+            self.auth_count += 1
+        self.writeline(b"Username: ")  # It fixes a problem with Hydra bruteforcer.
+        return False
 
-  def session_end(self):
-    self.session.end_session()
+    def setterm(self, term):
+        # Dummy file for the purpose of tests.
+        with open("/dev/null", "w") as f:
+            curses.setupterm(term, f.fileno())  # This will raise if the termtype is not supported
+            self.TERM = term
+            self.ESCSEQ = {}
+            for k in self.KEYS.keys():
+                str_ = curses.tigetstr(curses.has_key._capability_names[k])
+                if str_:
+                    self.ESCSEQ[str_] = k
+            self.CODES["DEOL"] = curses.tigetstr("el")
+            self.CODES["DEL"] = curses.tigetstr("dch1")
+            self.CODES["INS"] = curses.tigetstr("ich1")
+            self.CODES["CSRLEFT"] = curses.tigetstr("cub1")
+            self.CODES["CSRRIGHT"] = curses.tigetstr("cuf1")
+
+    def session_end(self):
+        self.session.end_session()

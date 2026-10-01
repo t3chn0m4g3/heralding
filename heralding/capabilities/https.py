@@ -22,6 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 class https(Http, HandlerBase):
-  """
+    """
     This class will get wrapped in SSL. This is possible because we by convention wrap
     all capabilities that ends with the letter 's' in SSL."""
