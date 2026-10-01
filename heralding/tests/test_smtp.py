@@ -143,3 +143,12 @@ async def test_ehlo_advertises_size_limit(serve, sink):
     features = await asyncio.to_thread(run)
     assert features.get("size") == "1048576"
     assert "auth" in features
+
+
+def test_explicit_fqdn_is_not_overwritten_by_lookup():
+    smtp.set_fqdn("", source="lookup")
+    smtp.smtp(make_options(banner="b", fqdn="fixed.example"))
+    smtp.set_fqdn("looked-up.example", source="lookup")
+    assert smtp.SMTPHandler.fqdn == "fixed.example"
+    smtp.set_fqdn("", source="config")  # reset pin for other tests
+    smtp.set_fqdn("", source="lookup")

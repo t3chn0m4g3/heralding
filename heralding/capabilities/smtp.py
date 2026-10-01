@@ -39,9 +39,17 @@ AUTH_FAILED = "535 5.7.8 Authentication credentials invalid"
 BAD_ENCODING = "501 5.5.2 Cannot decode response"
 
 
-def set_fqdn(value: str) -> None:
-    """Set the host name used in CRAM-MD5 challenges (called by Honeypot or from config)."""
-    SMTPHandler.fqdn = value or ""
+def set_fqdn(value: str, source: str = "config") -> None:
+    """Set the host name used in CRAM-MD5 challenges.
+
+    A value from the config pins the name; later periodic lookups (source="lookup") do not
+    overwrite it. An empty config value releases the pin.
+    """
+    if source == "config":
+        SMTPHandler._fqdn_pinned = bool(value)
+        SMTPHandler.fqdn = value or ""
+    elif not SMTPHandler._fqdn_pinned:
+        SMTPHandler.fqdn = value or ""
 
 
 def _b64decode(blob) -> bytes:
@@ -52,6 +60,7 @@ def _b64decode(blob) -> bytes:
 
 class SMTPHandler(SMTP):
     fqdn = ""
+    _fqdn_pinned = False
 
     def __init__(self, reader, writer, session, options, banner="ESMTP", ehlo_hostname=None):
         self.banner = banner

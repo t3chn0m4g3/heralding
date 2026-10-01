@@ -30,3 +30,17 @@ def test_public_ip_all_fail(monkeypatch):
     monkeypatch.setattr(common, "_fetch_text", fail)
     with pytest.raises(RuntimeError):
         common.get_public_ip()
+
+
+async def test_failed_lookup_keeps_last_good_value(monkeypatch):
+    from heralding import honeypot as hp
+
+    def fail():
+        raise RuntimeError("down")
+
+    hp.Honeypot.public_ip = "203.0.113.5"
+    monkeypatch.setattr(hp.common, "get_public_ip", fail)
+    h = hp.Honeypot({"capabilities": {}, "hash_cracker": {"enabled": False}})
+    await h._lookup_public_ip_once()
+    assert hp.Honeypot.public_ip == "203.0.113.5"
+    hp.Honeypot.public_ip = ""

@@ -85,3 +85,23 @@ def test_tpot_config_loads():
         "mysql",
         "rdp",
     }
+
+
+def test_session_start_event_does_not_alias_live_lists(tmp_path):
+    from heralding.reporting.memory_sink import MemorySink
+
+    hub = ReportingHub()
+    mem = MemorySink()
+    hub.add_sink(mem)
+    hub.start()
+    set_hub(hub)
+    try:
+        s = Session("10.0.0.1", 40000, "ftp", {}, 21, "10.0.0.2")
+        s.add_auth_attempt("plaintext", username="a", password="b")
+        s.end_session()
+    finally:
+        hub.stop()
+        set_hub(None)
+    start_event = mem.sessions[0]
+    assert start_event["session_ended"] is False
+    assert start_event["auth_attempts"] == []  # a copy taken at emit time, not the live list

@@ -56,3 +56,16 @@ async def test_session_counter_returns_to_zero(serve, sink):
     await _wait_sessions_zero()
     assert HandlerBase.global_sessions == 0
     assert not HandlerBase.sessions_per_ip
+
+
+async def test_create_server_read_limit_is_16k(serve, sink):
+    cap = pop3.Pop3(make_options(max_attempts=3, banner="+OK"))
+    host, port = await serve(cap)  # serve() goes through cap.create_server()
+    r, w = await asyncio.open_connection(host, port)
+    await r.readline()
+    w.write(b"A" * 20000 + b"\r\n")
+    await w.drain()
+    assert await asyncio.wait_for(r.read(), 5) == b""  # LimitOverrun -> session closed
+    w.close()
+    await _wait_sessions_zero()
+    assert HandlerBase.global_sessions == 0

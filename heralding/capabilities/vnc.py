@@ -32,8 +32,11 @@ logger = logging.getLogger(__name__)
 
 class Vnc(HandlerBase):
     NAME = "vnc"
-    # at most two wordlist runs at a time in the thread pool; the rest wait
-    _crack_sem: asyncio.Semaphore | None = None
+
+    def __init__(self, options):
+        super().__init__(options)
+        # at most two wordlist runs at a time in the thread pool; the rest wait
+        self._crack_sem: asyncio.Semaphore | None = None
 
     async def execute_capability(self, reader, writer, session):
         await self._handle_session(reader, writer, session)
@@ -82,8 +85,7 @@ class Vnc(HandlerBase):
 
         session.end_session()
 
-    @classmethod
-    def _semaphore(cls) -> asyncio.Semaphore:
-        if cls._crack_sem is None:
-            cls._crack_sem = asyncio.Semaphore(2)
-        return cls._crack_sem
+    def _semaphore(self) -> asyncio.Semaphore:
+        if self._crack_sem is None:
+            self._crack_sem = asyncio.Semaphore(2)
+        return self._crack_sem

@@ -57,14 +57,17 @@ class _SinkWorker(threading.Thread):
             logger.warning("Sink %s: " + msg, self.sink.name, *args)  # noqa: G003
 
     def run(self) -> None:
+        last_tick = time.monotonic()
         try:
             while True:
+                if time.monotonic() - last_tick >= _QUEUE_POLL:
+                    last_tick = time.monotonic()
+                    self._safe(self.sink.tick)
                 try:
                     kind, payload = self.queue.get(timeout=_QUEUE_POLL)
                 except queue.Empty:
                     if self._stopping.is_set():
                         break
-                    self._safe(self.sink.tick)
                     continue
                 if kind == "auth":
                     self._safe(self.sink.handle_auth, payload)

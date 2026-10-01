@@ -47,7 +47,7 @@ class Honeypot:
     async def _refresh_fqdn(self):
         while True:
             try:
-                smtp.set_fqdn(await asyncio.to_thread(socket.getfqdn))
+                smtp.set_fqdn(await asyncio.to_thread(socket.getfqdn), source="lookup")
             except Exception as exc:
                 logger.debug("getfqdn failed [%s] %s", type(exc).__name__, exc)
             await asyncio.sleep(1800)
@@ -59,14 +59,22 @@ class Honeypot:
                 return True
         return False
 
+    async def _lookup_public_ip_once(self):
+        """Refresh Honeypot.public_ip; on failure keep the last good value."""
+        try:
+            Honeypot.public_ip = await asyncio.to_thread(common.get_public_ip)
+            logger.info("Found public ip: %s", Honeypot.public_ip)
+        except Exception as exc:
+            logger.warning(
+                "Could not determine public ip [%s] %s (keeping %r)",
+                type(exc).__name__,
+                exc,
+                Honeypot.public_ip,
+            )
+
     async def _record_and_lookup_public_ip(self):
         while True:
-            try:
-                Honeypot.public_ip = await asyncio.to_thread(common.get_public_ip)
-                logger.info("Found public ip: %s", Honeypot.public_ip)
-            except Exception as exc:
-                Honeypot.public_ip = ""
-                logger.warning("Could not determine public ip [%s] %s", type(exc).__name__, exc)
+            await self._lookup_public_ip_once()
             await asyncio.sleep(3600)
 
     def setup_wordlist(self):

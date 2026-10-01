@@ -130,9 +130,9 @@ class Session:
             "destination_port": self.destination_port,
             "protocol": self.protocol,
             "num_auth_attempts": len(self.auth_attempts),
-            "auth_attempts": self.auth_attempts,
+            "auth_attempts": [dict(a) for a in self.auth_attempts],
             "session_ended": session_ended,
-            "auxiliary_data": self.auxiliary_data,
+            "auxiliary_data": dict(self.auxiliary_data),
         }
         return entry
 

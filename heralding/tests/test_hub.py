@@ -162,3 +162,27 @@ def test_start_raises_when_a_sink_cannot_open(tmp_path):
     finally:
         hub.stop()
     raise AssertionError("hub.start() must fail when the primary log file cannot be opened")
+
+
+def test_tick_runs_under_load():
+    class Ticker(Sink):
+        name = "ticker"
+
+        def __init__(self):
+            self.ticks = 0
+
+        def tick(self):
+            self.ticks += 1
+
+    hub = ReportingHub()
+    ticker = Ticker()
+    hub.add_sink(ticker)
+    hub.start()
+    try:
+        end = time.monotonic() + 1.2
+        while time.monotonic() < end:
+            hub.emit_auth(_auth())
+            time.sleep(0.005)
+        assert ticker.ticks >= 1
+    finally:
+        hub.stop()

@@ -77,3 +77,8 @@ async def test_vnc_short_response_is_not_fatal(serve, sink):
             break
         await asyncio.sleep(0.05)
     assert HandlerBase.global_sessions == 0
+
+
+def test_crack_semaphore_is_per_instance():
+    a, b = Vnc(make_options()), Vnc(make_options())
+    assert a._semaphore() is not b._semaphore()

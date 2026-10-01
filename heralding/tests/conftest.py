@@ -36,9 +36,7 @@ async def serve(sink) -> Callable[..., Awaitable[tuple[str, int]]]:
     servers: list[asyncio.AbstractServer] = []
 
     async def _serve(capability, ssl_context: ssl.SSLContext | None = None) -> tuple[str, int]:
-        server = await asyncio.start_server(
-            capability.handle_session, "127.0.0.1", 0, ssl=ssl_context
-        )
+        server = await capability.create_server("127.0.0.1", 0, ssl_context)
         servers.append(server)
         host, port = server.sockets[0].getsockname()[:2]
         return host, port
