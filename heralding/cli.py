@@ -107,7 +107,7 @@ def drop_privileges(uid_name='nobody', gid_name='nogroup'):
       new_uid_name, new_gid_name))
 
 
-if __name__ == '__main__':
+def main():
   break_if_python_not_supported()
   parser = ArgumentParser(description='Heralding')
 
@@ -182,3 +182,7 @@ if __name__ == '__main__':
     # We give reporting_relay a chance to be finished.
     loop.run_until_complete(asyncio.sleep(0.5))
     loop.close()
+
+
+if __name__ == "__main__":
+    main()

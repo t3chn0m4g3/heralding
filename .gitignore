@@ -37,7 +37,7 @@ server.key
 beeswarm.cfg
 
 *.log
-*.key
+/ssh.key
 #pydev
 .project
 .pydevproject
@@ -49,11 +49,16 @@ beeswarm.cfg
 
 .noseids
 admin_passwd_hash
-*.pem
+/*.pem
 *.csv
 
 venv/*
-heralding/heralding.yml
+
+.venv/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+.superpowers/
 
 # Local planning and validation documents
 /docs/

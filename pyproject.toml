@@ -1,0 +1,70 @@
+[project]
+name = "heralding"
+version = "2.0.0.dev0"
+description = "Credentials catching honeypot"
+readme = "README.rst"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.14"
+authors = [{ name = "Johnny Vestergaard", email = "jkv@unixcluster.dk" }]
+dependencies = [
+    "asyncssh>=2.24",
+    "aiosmtpd>=1.4.6",
+    "pycryptodome>=3.23",
+    "cryptography>=46",
+    "PyYAML>=6.0.3",
+    "rsa>=4.9",
+    # transitional until P4/P5 remove the hard imports:
+    "pyzmq>=27",
+    "pyOpenSSL>=25",
+    "requests>=2.32",
+    "hpfeeds3>=0.9.10",
+]
+
+[project.optional-dependencies]
+hpfeeds = ["hpfeeds3>=0.9.10"]
+curiosum = ["pyzmq>=27"]
+
+[project.scripts]
+heralding = "heralding.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/johnnykv/heralding"
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+    "pytest-asyncio>=1.4",
+    "ruff>=0.16",
+    "pymysql>=1.2",
+    "psycopg[binary]>=3.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "heralding"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = ["heralding/libs/msrdp", "heralding/libs/telnetsrv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "S"]
+ignore = [
+    "S101",  # assert in tests is fine; production asserts are removed in Task 7
+    "S104",  # 0.0.0.0 bind is the purpose of a honeypot
+    "S105", "S106", "S107",  # "password" strings are the data we log
+    "E501",  # formatter handles line length
+]
+
+[tool.ruff.lint.per-file-ignores]
+"heralding/tests/*" = ["S", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["heralding/tests"]
