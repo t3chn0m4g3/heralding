@@ -34,6 +34,7 @@ class SSH(asyncssh.SSHServer, HandlerBase):
         HandlerBase.__init__(self, options)
         self.session = None
         self.connection = None
+        self._pubkeys = []
 
     def connection_made(self, conn):
         SSH.connections.add(conn)
@@ -64,6 +65,21 @@ class SSH(asyncssh.SSHServer, HandlerBase):
     def password_auth_supported(self):
         return True
 
+    def public_key_auth_supported(self):
+        return True
+
+    def validate_public_key(self, username, key):
+        # Key attempts are not credentials: they go to auxiliary data, never to auth.csv
+        if len(self._pubkeys) < 20:
+            self._pubkeys.append(
+                {
+                    "username": username,
+                    "key_type": key.get_algorithm(),
+                    "fingerprint_sha256": key.get_fingerprint("sha256"),
+                }
+            )
+        return False
+
     def validate_password(self, username, password):
         # asyncssh also routes keyboard-interactive "Password:" responses through here
         if self.session is not None:
@@ -72,7 +88,10 @@ class SSH(asyncssh.SSHServer, HandlerBase):
 
     def get_auxiliary_data(self):
         data_fields = ["client_version", "recv_cipher", "recv_mac", "recv_compression"]
-        return {f: self.connection.get_extra_info(f) for f in data_fields}
+        data = {f: self.connection.get_extra_info(f) for f in data_fields}
+        if self._pubkeys:
+            data["publickey_attempts"] = list(self._pubkeys)
+        return data
 
     async def create_server(self, bind_host, port, ssl_context=None):
         key_file = "ssh.key"

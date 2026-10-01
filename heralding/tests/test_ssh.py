@@ -70,3 +70,24 @@ async def test_key_file_mode(tmp_path):
     ssh.SSH.generate_ssh_key(str(path))
     assert oct(path.stat().st_mode & 0o777) == "0o600"
     assert path.read_bytes().startswith(b"-----BEGIN")
+
+
+async def test_public_key_attempt_is_logged_as_aux_not_auth(ssh_server, sink):
+    host, port = ssh_server
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    with pytest.raises(asyncssh.PermissionDenied):
+        async with asyncssh.connect(
+            host,
+            port,
+            username="deploy",
+            client_keys=[key],
+            known_hosts=None,
+            preferred_auth=["publickey"],
+        ):
+            pass
+    ended = await asyncio.to_thread(sink.wait_for_session_end, 1)
+    attempts = ended[0]["auxiliary_data"]["publickey_attempts"]
+    assert attempts[0]["username"] == "deploy"
+    assert attempts[0]["key_type"] == "ssh-ed25519"
+    assert attempts[0]["fingerprint_sha256"] == key.get_fingerprint("sha256")
+    assert sink.auth == []  # no auth.csv line for key attempts
