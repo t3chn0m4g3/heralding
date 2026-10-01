@@ -1,4 +1,4 @@
-# Copyright (C) 2017 Roman Samoilenko <ttahabatt@gmail.com>
+# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,9 +15,9 @@
 
 import logging
 import os
+import weakref
 
 import asyncssh
-from Crypto.PublicKey import RSA
 
 from heralding.capabilities.handlerbase import HandlerBase
 
@@ -26,25 +26,35 @@ logger = logging.getLogger(__name__)
 
 class SSH(asyncssh.SSHServer, HandlerBase):
     NAME = "ssh"
-    connections_list = []
+    # live connections only; entries disappear when asyncssh drops the connection object
+    connections: weakref.WeakSet = weakref.WeakSet()
 
     def __init__(self, options):
         asyncssh.SSHServer.__init__(self)
         HandlerBase.__init__(self, options)
+        self.session = None
+        self.connection = None
 
     def connection_made(self, conn):
-        SSH.connections_list.append(conn)
-        self.address = conn.get_extra_info("peername")
-        self.dest_address = conn.get_extra_info("sockname")
+        SSH.connections.add(conn)
         self.connection = conn
-        self.handle_connection()
-        logger.debug("SSH connection received from {}.".format(conn.get_extra_info("peername")[0]))
+        address = conn.get_extra_info("peername")
+        dest_address = conn.get_extra_info("sockname")
+        if self._limit_reached(address):
+            conn.close()
+            return
+        self.session = self.create_session(address, dest_address)
+        logger.debug("SSH connection received from %s.", address[0])
 
     def connection_lost(self, exc):
+        if self.connection is not None:
+            SSH.connections.discard(self.connection)
+        if self.session is None:
+            return
         self.session.set_auxiliary_data(self.get_auxiliary_data())
         self.close_session(self.session)
         if exc:
-            logger.debug("SSH connection error: " + str(exc))
+            logger.debug("SSH connection error [%s] %s", type(exc).__name__, exc)
         else:
             logger.debug("SSH connection closed.")
 
@@ -55,19 +65,14 @@ class SSH(asyncssh.SSHServer, HandlerBase):
         return True
 
     def validate_password(self, username, password):
-        self.session.add_auth_attempt("plaintext", username=username, password=password)
+        # asyncssh also routes keyboard-interactive "Password:" responses through here
+        if self.session is not None:
+            self.session.add_auth_attempt("plaintext", username=username, password=password)
         return False
-
-    def handle_connection(self):
-        if self._limit_reached(self.address):
-            self.connection.close()
-            return
-        self.session = self.create_session(self.address, self.dest_address)
 
     def get_auxiliary_data(self):
         data_fields = ["client_version", "recv_cipher", "recv_mac", "recv_compression"]
-        data = {f: self.connection.get_extra_info(f) for f in data_fields}
-        return data
+        return {f: self.connection.get_extra_info(f) for f in data_fields}
 
     async def create_server(self, bind_host, port, ssl_context=None):
         key_file = "ssh.key"
@@ -85,8 +90,9 @@ class SSH(asyncssh.SSHServer, HandlerBase):
 
     @staticmethod
     def generate_ssh_key(ssh_key_file):
-        if not os.path.isfile(ssh_key_file):
-            with open(ssh_key_file, "w") as _file:
-                rsa_key = RSA.generate(2048)
-                priv_key_text = str(rsa_key.exportKey("PEM", pkcs=1), "utf-8")
-                _file.write(priv_key_text)
+        if os.path.isfile(ssh_key_file):
+            return
+        key = asyncssh.generate_private_key("ssh-rsa", key_size=2048)
+        fd = os.open(ssh_key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(key.export_private_key())

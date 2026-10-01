@@ -134,9 +134,12 @@ class Honeypot:
             if task is not None:
                 task.cancel()
 
-        for conn in list(ssh.SSH.connections_list):
+        for conn in list(ssh.SSH.connections):
             conn.close()
-            await conn.wait_closed()
+            try:
+                await asyncio.wait_for(conn.wait_closed(), timeout=2)
+            except TimeoutError:
+                pass
 
         for server in self._servers:
             server.close()
