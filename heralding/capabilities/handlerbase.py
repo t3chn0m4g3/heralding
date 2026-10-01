@@ -17,6 +17,7 @@ import asyncio
 import collections
 import logging
 import ssl
+import struct
 import time
 
 from heralding.misc.session import Session
@@ -36,6 +37,7 @@ _CLIENT_ERRORS = (
     IndexError,
     KeyError,
     OSError,
+    struct.error,
 )
 
 

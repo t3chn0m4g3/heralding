@@ -1,4 +1,4 @@
-# Copyright (C) 2018 Roman Samoilenko <ttahabatt@gmail.com>
+# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,10 +16,12 @@
 import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc.textutil import decode_lossless
 
 # Socks constants
 SOCKS_VERSION = b"\x05"
-AUTH_METHOD = b"\x02"  # username/password authentication. RFC 1929
+AUTH_METHOD = b"\x02"  # username/password authentication. RFC 1928
+AUTH_VERSION = b"\x01"  # sub-negotiation version. RFC 1929
 SOCKS_FAIL = b"\xff"
 
 logger = logging.getLogger(__name__)
@@ -32,42 +34,38 @@ class Socks5(HandlerBase):
         await self._handle_session(reader, writer, session)
 
     async def _handle_session(self, reader, writer, session):
-        # 257 - max bytes number for greeting according to RFC 1928
-        greeting = await reader.read(257)
-        if len(greeting) > 2:
-            await self.try_authenticate(reader, writer, session, greeting)
+        # greeting: VER NMETHODS METHODS... (RFC 1928)
+        header = await reader.readexactly(2)
+        version, nmethods = header[:1], header[1]
+        authmethods = await reader.readexactly(nmethods)
+        if version != SOCKS_VERSION:
+            logger.debug("Wrong socks version: %r", version)
+            session.end_session()
+            return
+        session.set_auxiliary_data(self.get_auxiliary_data(authmethods))
+        if AUTH_METHOD[0] in authmethods:
+            await self.do_authenticate(reader, writer, session)
         else:
-            logger.debug(f"Incorrect client greeting string: {greeting!r}")
+            writer.write(SOCKS_VERSION + SOCKS_FAIL)
+            await writer.drain()
         session.end_session()
-
-    async def try_authenticate(self, reader, writer, session, greeting):
-        version, authmethods = self.unpack_msg(greeting)
-        if version == SOCKS_VERSION:
-            if AUTH_METHOD in authmethods:
-                await self.do_authenticate(reader, writer, session)
-            else:
-                writer.write(SOCKS_VERSION + SOCKS_FAIL)
-                await writer.drain()
-            session.set_auxiliary_data(self.get_auxiliary_data(authmethods))
-        else:
-            logger.debug(f"Wrong socks version: {version!r}")
 
     async def do_authenticate(self, reader, writer, session):
         writer.write(SOCKS_VERSION + AUTH_METHOD)
         await writer.drain()
-        # 513 - max bytes number for username/password auth according to RFC 1929
-        auth_data = await reader.read(513)
-        if len(auth_data) > 2:
-            username, password = self.unpack_auth(auth_data)
-            session.add_auth_attempt(
-                "plaintext", username=username.decode(), password=password.decode()
-            )
-            writer.write(AUTH_METHOD + SOCKS_FAIL)
-            await writer.drain()
-        else:
-            logger.debug(f"Wrong authentication data: {auth_data!r}")
+        # sub-negotiation: VER ULEN UNAME PLEN PASSWD (RFC 1929); fields may arrive split
+        _ver, ulen = await reader.readexactly(2)
+        username = await reader.readexactly(ulen)
+        plen = (await reader.readexactly(1))[0]
+        password = await reader.readexactly(plen)
+        session.add_auth_attempt(
+            "plaintext", username=decode_lossless(username), password=decode_lossless(password)
+        )
+        writer.write(AUTH_VERSION + SOCKS_FAIL)
+        await writer.drain()
 
-    def get_auxiliary_data(self, authmethods):
+    @staticmethod
+    def get_auxiliary_data(authmethods):
         _methods = []
         for m in authmethods:
             if m == 2:
@@ -82,25 +80,4 @@ class Socks5(HandlerBase):
                 _methods.append(f"PRIVATE METHOD({hex(m)})")
             elif m == 255:
                 _methods.append("NO ACCEPTABLE METHODS")
-
-        data = {"client_auth_methods": _methods}
-        return data
-
-    @staticmethod
-    def unpack_msg(data):
-        socks_version = data[:1]  # we need byte representation
-        authmethods_n = data[1]
-        authmethods = data[2 : 2 + authmethods_n]
-        return socks_version, authmethods
-
-    @staticmethod
-    def unpack_auth(auth_data):
-        ulen = auth_data[1]
-        username = auth_data[2 : 2 + ulen]
-        password_part = auth_data[2 + ulen :]
-        if password_part:
-            plen = password_part[0]
-            password = auth_data[-plen:]
-        else:
-            password = b""
-        return username, password
+        return {"client_auth_methods": _methods}

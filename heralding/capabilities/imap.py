@@ -85,32 +85,35 @@ class Imap(HandlerBase):
         session.end_session()
 
     async def cmd_authenticate(self, session, reader, writer, tag, args):
-        mechanism = args.split()
-        if len(mechanism) == 1:
-            auth_mechanism = mechanism[0].lower()
-        else:
+        parts = args.split(None, 1)
+        if not parts:
+            await self.send_message(writer, tag + " BAD invalid command")
+            return "Not Authenticated"
+        auth_mechanism = parts[0].lower()
+        if auth_mechanism not in self.available_mechanisms:
             await self.send_message(writer, tag + " BAD invalid command")
             return "Not Authenticated"
 
-        if auth_mechanism in self.available_mechanisms:
+        if len(parts) == 2:
+            # SASL-IR (RFC 4959): initial response on the command line, "=" means empty
+            raw_msg = b"" if parts[1] == "=" else parts[1].encode("ascii", "replace")
+        else:
             # the space after '+' is needed according to RFC
             await self.send_message(writer, "+ ")
-            raw_msg = await reader.read(512)
+            raw_msg = (await reader.readline()).rstrip(b"\r\n")
 
-            if auth_mechanism == "plain":
-                success, credentials = self.try_b64decode(raw_msg, session)
-                # \x00 is a separator between authorization identity,
-                # username and password. Authorization identity isn't used in
-                # this auth mechanism, so we must have 2 \x00 symbols.(RFC 4616)
-                if success and credentials.count("\x00") == 2:
-                    raw_msg_dec = str(base64.b64decode(raw_msg), "utf-8")
-                    _, user, password = raw_msg_dec.split("\x00")
-                    session.add_auth_attempt("plaintext", username=user, password=password)
-                    await self.send_message(writer, tag + " NO Authentication failed")
-                else:
-                    await self.send_message(writer, tag + " BAD invalid command")
-        else:
-            await self.send_message(writer, tag + " BAD invalid command")
+        if auth_mechanism == "plain":
+            success, credentials = self.try_b64decode(raw_msg, session)
+            # \x00 separates authorization identity, username and password; the
+            # authorization identity is unused here, so exactly two \x00 are expected (RFC 4616)
+            if success and credentials.count(b"\x00") == 2:
+                _, user, password = credentials.split(b"\x00")
+                session.add_auth_attempt(
+                    "plaintext", username=decode_lossless(user), password=decode_lossless(password)
+                )
+                await self.send_message(writer, tag + " NO Authentication failed")
+            else:
+                await self.send_message(writer, tag + " BAD invalid command")
         self.stop_if_too_many_attempts(session)
         return "Not Authenticated"
 
@@ -120,25 +123,61 @@ class Imap(HandlerBase):
         return "Not Authenticated"
 
     async def cmd_login(self, session, reader, writer, tag, args):
-        if args:
-            user_cred = args.split(" ", 1)
-        else:
+        try:
+            values = await self._parse_astrings(reader, writer, args, 2)
+        except ValueError:
             await self.send_message(writer, tag + " BAD invalid command")
             return "Not Authenticated"
-
-        # Delete first and last quote,
-        # because login and password can be sent as quoted strings
-        if len(user_cred) == 1:
-            user = self.strip_quotes(user_cred[0])
-            password = ""
-        else:
-            user = self.strip_quotes(user_cred[0])
-            password = self.strip_quotes(user_cred[1])
+        if not values:
+            await self.send_message(writer, tag + " BAD invalid command")
+            return "Not Authenticated"
+        user = values[0]
+        password = values[1] if len(values) > 1 else ""
 
         session.add_auth_attempt("plaintext", username=user, password=password)
         await self.send_message(writer, tag + " NO Authentication failed")
         self.stop_if_too_many_attempts(session)
         return "Not Authenticated"
+
+    async def _parse_astrings(self, reader, writer, text, count):
+        """Parse up to `count` IMAP astrings (atom, quoted string or {n} literal)."""
+        values = []
+        rest = text
+        while len(values) < count:
+            rest = rest.lstrip(" ")
+            if not rest:
+                break
+            if rest.startswith('"'):
+                value, rest = self._read_quoted(rest)
+            elif rest.startswith("{") and rest.endswith("}"):
+                size = int(rest[1:-1].rstrip("+"))
+                if size > 4096:
+                    raise ValueError("literal too large")
+                if not text.endswith("+}"):  # non-synchronising literals need no go-ahead
+                    await self.send_message(writer, "+ ")
+                data = await reader.readexactly(size)
+                value = decode_lossless(data)
+                rest = decode_lossless(await reader.readline()).rstrip("\r\n")
+            else:
+                value, _, rest = rest.partition(" ")
+            values.append(value)
+        return values
+
+    @staticmethod
+    def _read_quoted(text):
+        out = []
+        i = 1
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                return "".join(out), text[i + 1 :]
+            out.append(ch)
+            i += 1
+        raise ValueError("unterminated quoted string")
 
     async def cmd_logout(self, session, reader, writer, tag, args):
         await self.send_message(writer, "* BYE IMAP4rev1 Server logging out")
@@ -162,16 +201,7 @@ class Imap(HandlerBase):
     @staticmethod
     def try_b64decode(b64_str, session):
         try:
-            result = base64.b64decode(b64_str)
-            return True, str(result, "utf-8")
-        except binascii.Error:
-            logger.warning(f"Error decoding base64: {binascii.hexlify(b64_str)} ({session.id})")
-            return False, ""
-
-    @staticmethod
-    def strip_quotes(quoted_str):
-        if quoted_str.startswith('"') and quoted_str.endswith('"'):
-            nonquoted_str = quoted_str[1:-1]
-        else:
-            nonquoted_str = quoted_str
-        return nonquoted_str
+            return True, base64.b64decode(b64_str, validate=True)
+        except binascii.Error, ValueError:
+            logger.debug("Error decoding base64: %s (%s)", binascii.hexlify(b64_str), session.id)
+            return False, b""
