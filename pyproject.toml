@@ -45,7 +45,7 @@ module-name = "heralding"
 [tool.ruff]
 line-length = 100
 target-version = "py314"
-extend-exclude = ["heralding/libs/msrdp", "heralding/libs/telnetsrv"]
+extend-exclude = ["heralding/libs/telnetsrv"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "S"]

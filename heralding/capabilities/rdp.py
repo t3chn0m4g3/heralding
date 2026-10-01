@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import asyncio
 import logging
 import struct
 
@@ -33,6 +34,7 @@ from heralding.libs.msrdp.pdu import (
 )
 from heralding.libs.msrdp.security import ServerSecurity
 from heralding.libs.msrdp.tls import TLS, TLSHandshakeError
+from heralding.misc import certs
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +99,12 @@ class RDP(HandlerBase):
 
             # TLS Upgrade start
             logger.debug("RDP TLS initilization")
-            tls_obj = TLS(writer, reader, "rdp.pem")
+            pem_file = certs.ensure_cert(
+                "rdp.pem", (self.options.get("protocol_specific_data") or {}).get("cert")
+            )
+            tls_obj = TLS(
+                writer, reader, pem_file, min_version=self.persona_value("tls_min_version", "TLSv1")
+            )
             await tls_obj.do_tls_handshake()
 
             # Now using send_data and recv_next_tpkt
@@ -153,10 +160,13 @@ class RDP(HandlerBase):
             client_info.parseTLS(data)
             username = client_info.rdpUsername
             password = client_info.rdpPassword
+            session.set_auxiliary_data(
+                {"domain": client_info.domain, "tls_version": tls_obj.version}
+            )
             session.add_auth_attempt("plaintext", username=username, password=password)
 
             session.end_session()
-        except InvalidExpectedData, TLSHandshakeError:
+        except InvalidExpectedData, TLSHandshakeError, asyncio.IncompleteReadError:
             logger.debug("Malformed packet detected. Closing session.")
             session.end_session()
             return
