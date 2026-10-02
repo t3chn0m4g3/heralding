@@ -68,6 +68,24 @@ capabilities:
       banner: ""
       syst_type: ""
 
+  ftps:
+    enabled: true
+    port: 990
+    timeout: 30
+    protocol_specific_data:
+      max_attempts: 3
+      banner: ""
+      syst_type: ""
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
+        valid_days: 365
+        serial_number: 0
+
   telnet:
     enabled: true
     port: 23

@@ -23,6 +23,7 @@ EXPECTED = {
     "mqtts": "implicit",
     "http_proxy": None,
     "submission": "starttls",
+    "ftps": "implicit",
 }
 
 

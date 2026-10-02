@@ -2,6 +2,7 @@
 
 from heralding.capabilities import (  # noqa: F401
     ftp,
+    ftps,
     http,
     http_proxy,
     https,

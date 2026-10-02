@@ -22,8 +22,10 @@
 # and such derivative works.
 
 import logging
+import ssl
 
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc import certs
 from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
@@ -35,11 +37,20 @@ class FtpHandler:
     """Handles a single FTP connection"""
 
     def __init__(
-        self, reader, writer, options, session, banner="FTP Server", syst_type="UNIX Type: L8"
+        self,
+        reader,
+        writer,
+        options,
+        session,
+        banner="FTP Server",
+        syst_type="UNIX Type: L8",
+        tls_context=None,
     ):
         self.banner = banner
         self.max_loggins = int(options["protocol_specific_data"]["max_attempts"])
         self.syst_type = syst_type
+        self.tls_context = tls_context  # None: AUTH TLS not offered (already on TLS, or disabled)
+        self.tls_active = False
         self.authenticated = False
         self.writer = writer
         self.reader = reader
@@ -74,7 +85,17 @@ class FtpHandler:
                 cmd = cmd.strip("\r\n")
                 cmd = cmd.upper()
                 # List of commands allowed before a login
-                unauth_cmds = ["USER", "PASS", "QUIT", "SYST"]
+                unauth_cmds = [
+                    "USER",
+                    "PASS",
+                    "QUIT",
+                    "SYST",
+                    "FEAT",
+                    "AUTH",
+                    "PBSZ",
+                    "PROT",
+                    "OPTS",
+                ]
                 meth = getattr(self, "do_" + cmd, None)
                 if not meth:
                     await self.respond("500 Unknown Command.")
@@ -104,6 +125,34 @@ class FtpHandler:
     async def do_SYST(self, arg):
         await self.respond(f"215 {self.syst_type}")
 
+    async def do_FEAT(self, arg):
+        features = ["UTF8", "PBSZ", "PROT"]
+        if self.tls_context is not None and not self.tls_active:
+            features.insert(0, "AUTH TLS")
+        await self.respond("211-Features:\r\n" + "".join(f" {f}\r\n" for f in features) + "211 End")
+
+    async def do_AUTH(self, arg):
+        # explicit FTPS (RFC 4217): AUTH TLS upgrades the control connection in place
+        if self.tls_context is None or self.tls_active:
+            await self.respond("502 Command not implemented.")
+            return
+        if (arg or "").upper() not in ("TLS", "TLS-C", "SSL"):
+            await self.respond("504 Unknown security mechanism.")
+            return
+        await self.respond("234 AUTH TLS successful.")
+        await self.writer.start_tls(self.tls_context, ssl_handshake_timeout=10)
+        self.tls_active = True
+        self.session.set_auxiliary_data({"starttls": True})
+
+    async def do_PBSZ(self, arg):
+        await self.respond("200 PBSZ=0")
+
+    async def do_PROT(self, arg):
+        await self.respond("200 Protection level set.")
+
+    async def do_OPTS(self, arg):
+        await self.respond("200 OK.")
+
     async def do_QUIT(self, arg):
         await self.respond("221 Bye.")
         self.serve_flag = False
@@ -121,12 +170,30 @@ class FtpHandler:
 
 class ftp(HandlerBase):
     NAME = "ftp"
+    NEEDS_CERT = True  # for explicit AUTH TLS
+    OFFER_AUTH_TLS = True
 
     def __init__(self, options):
         super().__init__(options)
         self._options = options
+        self._tls_context = None
+
+    def _context(self):
+        if not self.OFFER_AUTH_TLS:
+            return None
+        if self._tls_context is None:
+            psd = self.options.get("protocol_specific_data") or {}
+            pem = certs.ensure_cert(f"{self.NAME}.pem", psd.get("cert"))
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            min_version = psd.get("tls_min_version") or "TLSv1_2"
+            ctx.minimum_version = getattr(ssl.TLSVersion, str(min_version), ssl.TLSVersion.TLSv1_2)
+            ctx.load_cert_chain(pem)
+            self._tls_context = ctx
+        return self._tls_context
 
     async def execute_capability(self, reader, writer, session):
+        if self.OFFER_AUTH_TLS:
+            session.set_auxiliary_data({"starttls": False})
         ftp_cap = FtpHandler(
             reader,
             writer,
@@ -134,5 +201,6 @@ class ftp(HandlerBase):
             session,
             banner=self.persona_value("banner", "FTP Server"),
             syst_type=self.persona_value("syst_type", "UNIX Type: L8"),
+            tls_context=self._context(),
         )
         await ftp_cap.serve()
