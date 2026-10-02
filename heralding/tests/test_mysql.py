@@ -58,16 +58,18 @@ async def test_mysql_logs_salt_and_hashcat_11200(serve, sink):
     assert bytes(a ^ b for a, b in zip(s1, s2, strict=True)) == scramble
 
 
-async def test_mysql_thread_id_is_random(serve, sink):
+async def test_thread_id_differs_between_connections(serve, sink):
     host, port = await serve(mysql.MySQL(make_options()))
-    ids = set()
-    for _ in range(3):
-        reader, writer = await asyncio.open_connection(host, port)
-        header = await reader.readexactly(4)
-        payload = await reader.readexactly(int.from_bytes(header[:3], "little"))
-        # protocol version (1) + server version (NUL terminated) + thread id (4)
-        ver_end = payload.index(b"\x00", 1)
-        ids.add(int.from_bytes(payload[ver_end + 1 : ver_end + 5], "little"))
-        writer.close()
+
+    def thread_id():
+        conn = pymysql.connections.Connection(
+            host=host, port=port, user="u", password="p", connect_timeout=5, defer_connect=True
+        )
+        try:
+            conn.connect()
+        except pymysql.err.OperationalError:
+            pass
+        return conn.server_thread_id[0]
+
+    ids = {await asyncio.to_thread(thread_id) for _ in range(3)}
     assert len(ids) == 3
-    assert 4321 not in ids

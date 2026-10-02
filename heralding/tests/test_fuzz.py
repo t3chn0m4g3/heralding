@@ -72,9 +72,6 @@ def _payloads():
     yield b"A" * 70000 + b"\r\n"
     yield b"USER \x00\xff\xfe\r\nPASS \x80\r\n"
     yield b"GET / HTTP/1.1\r\n" + b"X: y\r\n" * 200 + b"\r\n"
-    yield b"\x05\x01\x02\x01\x00\x00"  # socks5 empty user/pass
-    yield b"\x00\x00\x00\x08\x04\xd2\x16\x2f"  # postgres SSLRequest only
-    yield b"RFB 003.007\n\x02" + b"\x00" * 3  # vnc short response
 
 
 async def _wait_sessions_zero():

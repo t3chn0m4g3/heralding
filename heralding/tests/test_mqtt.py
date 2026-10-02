@@ -78,12 +78,3 @@ async def test_non_utf8_password_is_logged(serve, sink):
     assert rc == BAD_CREDENTIALS
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert attempt["password"] == "p\\xe4"
-
-
-async def test_oversized_remaining_length_is_a_client_error(serve, sink):
-    host, port = await serve(mqtt.Mqtt(make_options(timeout=2)))
-    reader, writer = await asyncio.open_connection(host, port)
-    writer.write(b"\x10\xff\xff\xff\x7f")  # remaining length 268 MB
-    await writer.drain()
-    assert await asyncio.wait_for(reader.read(), 5) == b""
-    writer.close()

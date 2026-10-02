@@ -38,6 +38,8 @@ dev = [
     "python-tds>=1.17",
     "smbprotocol>=1.17",
     "pyVoIP>=1.6",
+    "python-socks>=2.5",
+    "vncdotool>=1.2",
     "audioop-lts>=0.2",  # audioop was removed in 3.13; pyVoIP imports it
 ]
 

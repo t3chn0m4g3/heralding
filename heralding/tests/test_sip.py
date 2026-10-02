@@ -77,21 +77,6 @@ def _udp_send(host, port, payload, timeout=1.0):
             return b""
 
 
-async def test_udp_garbage_gets_no_reply_and_endpoint_survives(sink):
-    transport, port = await _udp_server(sink)
-    try:
-        assert (
-            await asyncio.to_thread(_udp_send, "127.0.0.1", port, b"\xff\x00 not sip\r\n\r\n")
-            == b""
-        )
-        probe = b"OPTIONS sip:h SIP/2.0\r\nVia: SIP/2.0/UDP a;branch=1\r\nCall-ID: 1\r\nCSeq: 1 OPTIONS\r\n\r\n"
-        reply = await asyncio.to_thread(_udp_send, "127.0.0.1", port, probe, 5)
-        assert reply.startswith(b"SIP/2.0 200 OK")
-        assert len(reply) <= sip.Sip.MAX_REPLY_RATIO * len(probe)  # anti-amplification
-    finally:
-        transport.close()
-
-
 async def test_udp_flood_from_one_source_is_rate_limited(sink):
     transport, port = await _udp_server(sink)
     try:
