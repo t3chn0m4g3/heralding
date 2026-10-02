@@ -17,6 +17,10 @@ uv run python tools/validation/check_tpot.py ../tpotce
 tools/validation/build_tpot.sh ../tpotce heralding:tpot-dev
 ```
 
+`free_port_logins.py` probes LDAP/LDAPS/FTPS/MQTTS against the built T-Pot container;
+invoke it like `client_logins.py` below, substituting the T-Pot container name. Its config
+can retain every T-Pot setting while disabling only the external public-IP lookup.
+
 The last command archives the commit pinned in T-Pot's Dockerfile into a temporary named
 build context. It works with local commits. The Dockerfile's remote source stage requires
 that commit to exist at the configured repository; it is bypassed by the local context.
