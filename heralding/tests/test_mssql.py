@@ -13,7 +13,7 @@ async def test_login_is_refused_and_logged(serve, sink):
     def run():
         with pytest.raises(pytds.Error) as excinfo:  # pytds maps 18456 to OperationalError
             pytds.connect(
-                server=host,
+                dsn=host,
                 port=port,
                 user="sa",
                 password="P@ssw0rd!",

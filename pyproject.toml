@@ -72,3 +72,8 @@ ignore = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["heralding/tests"]
+filterwarnings = [
+    # deprecations inside third-party test clients, not in heralding
+    "ignore::DeprecationWarning:ldap3.*",
+    "ignore:TripleDES has been moved:cryptography.utils.CryptographyDeprecationWarning",
+]
