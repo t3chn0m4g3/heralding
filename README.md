@@ -131,12 +131,15 @@ application with formula evaluation enabled.
 
 ```shell
 docker build -t heralding .
+mkdir -p log
+sudo chown 2000:2000 log
 docker run --read-only --tmpfs /tmp/heralding:uid=2000,gid=2000 \
   -v "$PWD/log:/var/log/heralding" -p 2121:21 -p 2222:22 heralding
 tail log/auth.csv
 ```
 
-The image runs as uid 2000 with a read-only root filesystem. Logs go to `/var/log/heralding`.
+The image runs as uid 2000 with a read-only root filesystem. Logs go to `/var/log/heralding`; the authentication log is `auth.csv` in the container
+(`log_auth.csv` when running directly). The mounted log directory must be writable by uid 2000.
 
 ## Running the tests
 

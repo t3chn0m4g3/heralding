@@ -2,6 +2,8 @@ import asyncio
 import base64
 import http.client as httpclient
 
+import pytest
+
 from heralding.capabilities import http_proxy
 from heralding.tests.conftest import make_options
 
@@ -46,16 +48,18 @@ async def test_proxy_credentials_are_logged(serve, sink):
 
 async def test_connect_method_is_refused_not_forwarded(serve, sink):
     host, port = await serve(http_proxy.HttpProxy(make_options()))
-    reader, writer = await asyncio.open_connection(host, port)
-    token = base64.b64encode(b"u:p").decode()
-    writer.write(
-        f"CONNECT example.org:443 HTTP/1.1\r\nHost: example.org:443\r\n"
-        f"Proxy-Authorization: Basic {token}\r\n\r\n".encode()
-    )
-    await writer.drain()
-    raw = await asyncio.wait_for(reader.read(), 5)
-    assert raw.split(b"\r\n")[0].split()[1] == b"407"
-    writer.close()
+
+    def run():
+        client = httpclient.HTTPConnection(host, port, timeout=5)
+        token = base64.b64encode(b"u:p").decode()
+        client.set_tunnel("example.org", 443, headers={"Proxy-Authorization": "Basic " + token})
+        try:
+            with pytest.raises(OSError, match="407"):
+                client.connect()
+        finally:
+            client.close()
+
+    await asyncio.to_thread(run)
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert (attempt["username"], attempt["password"]) == ("u", "p")
     ended = await asyncio.to_thread(sink.wait_for_session_end, 1)

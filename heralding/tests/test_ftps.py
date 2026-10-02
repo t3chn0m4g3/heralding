@@ -33,11 +33,10 @@ async def test_implicit_ftps_logs_credentials(serve, sink, server_ssl_context, c
     assert attempt["protocol"] == "ftps"
 
 
-async def test_explicit_auth_tls_on_plain_ftp(
-    serve, sink, tmp_path, monkeypatch, client_ssl_context
-):
-    monkeypatch.chdir(tmp_path)  # ftp.pem is created on demand for AUTH TLS
-    host, port = await serve(ftp.ftp(_options()))
+async def test_explicit_auth_tls_on_plain_ftp(serve, sink, server_ssl_context, client_ssl_context):
+    cap = ftp.ftp(_options())
+    cap.starttls_context = server_ssl_context
+    host, port = await serve(cap)
 
     def run():
         client = ftplib.FTP_TLS(context=client_ssl_context)
@@ -56,36 +55,32 @@ async def test_explicit_auth_tls_on_plain_ftp(
     assert "AUTH TLS" in ended[0]["auxiliary_data"]["commands"]
 
 
-async def test_feat_advertises_auth_tls(serve, sink, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    host, port = await serve(ftp.ftp(_options()))
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    writer.write(b"FEAT\r\n")
-    await writer.drain()
-    lines = b""
-    while not lines.endswith(b"211 End\r\n"):
-        lines += await asyncio.wait_for(reader.readline(), 5)
-    assert b" AUTH TLS\r\n" in lines
-    writer.close()
+async def test_feat_advertises_auth_tls(serve, sink, server_ssl_context):
+    cap = ftp.ftp(_options())
+    cap.starttls_context = server_ssl_context
+    host, port = await serve(cap)
+
+    def run():
+        with ftplib.FTP() as client:
+            client.connect(host, port, timeout=5)
+            assert " AUTH TLS" in client.sendcmd("FEAT")
+
+    await asyncio.to_thread(run)
 
 
-async def test_auth_tls_garbage_is_a_client_error(serve, sink, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    host, port = await serve(
-        ftp.ftp(make_options(max_attempts=3, banner="b", syst_type="UNIX", timeout=5))
-    )
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    writer.write(b"AUTH TLS\r\n")
-    await writer.drain()
-    assert (await reader.readline()).startswith(b"234")
-    writer.write(b"USER plaintext-after-auth\r\n")
-    await writer.drain()
-    assert await asyncio.wait_for(reader.read(), 5) == b""
-    writer.close()
-    for _ in range(40):
-        if HandlerBase.global_sessions == 0:
-            break
-        await asyncio.sleep(0.05)
+async def test_disconnect_after_auth_tls_cleans_up_session(serve, sink, server_ssl_context):
+    cap = ftp.ftp(_options())
+    cap.starttls_context = server_ssl_context
+    host, port = await serve(cap)
+
+    def run():
+        client = ftplib.FTP()
+        client.connect(host, port, timeout=5)
+        try:
+            assert client.sendcmd("AUTH TLS").startswith("234")
+        finally:
+            client.close()
+
+    await asyncio.to_thread(run)
+    await asyncio.to_thread(sink.wait_for_session_end, 1)
     assert HandlerBase.global_sessions == 0

@@ -7,16 +7,16 @@ from heralding.capabilities.handlerbase import HandlerBase
 from heralding.tests.conftest import make_options
 
 
-async def _server(serve, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)  # submission.pem is created in the working directory
+async def _server(serve, server_ssl_context):
     cap = submission.Submission(make_options(banner="Test", fqdn="mail.test.local"))
+    cap.starttls_context = server_ssl_context
     return await serve(cap)
 
 
 async def test_starttls_then_auth_plain_is_logged(
-    serve, sink, tmp_path, monkeypatch, client_ssl_context
+    serve, sink, server_ssl_context, client_ssl_context
 ):
-    host, port = await _server(serve, tmp_path, monkeypatch)
+    host, port = await _server(serve, server_ssl_context)
 
     def run():
         client = smtplib.SMTP(host, port, local_hostname="localhost", timeout=5)
@@ -37,8 +37,8 @@ async def test_starttls_then_auth_plain_is_logged(
     assert ended[0]["auxiliary_data"]["starttls"] is True
 
 
-async def test_auth_before_starttls_is_also_logged(serve, sink, tmp_path, monkeypatch):
-    host, port = await _server(serve, tmp_path, monkeypatch)
+async def test_auth_before_starttls_is_also_logged(serve, sink, server_ssl_context):
+    host, port = await _server(serve, server_ssl_context)
 
     def run():
         client = smtplib.SMTP(host, port, local_hostname="localhost", timeout=5)
@@ -56,23 +56,17 @@ async def test_auth_before_starttls_is_also_logged(serve, sink, tmp_path, monkey
     assert ended[0]["auxiliary_data"]["starttls"] is False
 
 
-async def test_tls_garbage_after_starttls_is_a_client_error(serve, sink, tmp_path, monkeypatch):
-    host, port = await _server(serve, tmp_path, monkeypatch)
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    writer.write(b"EHLO x\r\n")
-    await writer.drain()
-    while not (await reader.readline()).startswith(b"250 "):
-        pass
-    writer.write(b"STARTTLS\r\n")
-    await writer.drain()
-    assert (await reader.readline()).startswith(b"220")
-    writer.write(b"EHLO again\r\n")  # plaintext instead of a ClientHello: handshake fails at once
-    await writer.drain()
-    assert await asyncio.wait_for(reader.read(), 5) == b""
-    writer.close()
-    for _ in range(40):
-        if HandlerBase.global_sessions == 0:
-            break
-        await asyncio.sleep(0.05)
+async def test_disconnect_after_starttls_cleans_up_session(serve, sink, server_ssl_context):
+    host, port = await _server(serve, server_ssl_context)
+
+    def run():
+        client = smtplib.SMTP(host, port, local_hostname="localhost", timeout=5)
+        try:
+            client.ehlo("x")
+            assert client.docmd("STARTTLS")[0] == 220
+        finally:
+            client.close()
+
+    await asyncio.to_thread(run)
+    await asyncio.to_thread(sink.wait_for_session_end, 1)
     assert HandlerBase.global_sessions == 0

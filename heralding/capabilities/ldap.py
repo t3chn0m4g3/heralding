@@ -46,6 +46,11 @@ def ldap_result(code, diagnostic="", matched_dn=""):
 class Ldap(HandlerBase):
     NAME = "ldap"
 
+    def __init__(self, options):
+        super().__init__(options)
+        psd = options.get("protocol_specific_data") or {}
+        self.max_attempts = int(psd.get("max_attempts", 10))
+
     async def execute_capability(self, reader, writer, session):
         sasl = []
         while session.connected:
@@ -63,6 +68,8 @@ class Ldap(HandlerBase):
             if op.tag == BIND_REQUEST:
                 code = self._bind(session, op, sasl)
                 await self._reply(writer, message_id, BIND_RESPONSE, ldap_result(code))
+                if session.get_number_of_login_attempts() >= self.max_attempts:
+                    break
             elif op.tag == SEARCH_REQUEST:
                 await self._search(writer, message_id, op)
             elif op.tag == EXTENDED_REQUEST:

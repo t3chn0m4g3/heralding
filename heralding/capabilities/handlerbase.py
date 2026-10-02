@@ -16,6 +16,7 @@
 import asyncio
 import collections
 import logging
+import socket
 import ssl
 import struct
 import time
@@ -47,6 +48,7 @@ class HandlerBase:
     TRANSPORT: str = "tcp"  # "tcp" | "udp"
     NEEDS_CERT: bool = False  # capability handles TLS itself but needs <NAME>.pem in CWD
     persona = None  # set by Honeypot.start(); see misc/persona.py
+    starttls_context = None  # set by Honeypot.start() for STARTTLS / AUTH TLS capabilities
     PERSONA_NAME: str | None = (
         None  # persona entry to use when it differs from NAME (e.g. ftps -> ftp)
     )
@@ -224,6 +226,19 @@ class DatagramHandlerBase(HandlerBase):
 
     async def create_datagram_endpoint(self, bind_host, port):
         loop = asyncio.get_running_loop()
+        if ":" in str(bind_host):
+            # asyncio sets IPV6_V6ONLY for TCP listeners but not for UDP; without it "::"
+            # collides with a 0.0.0.0 endpoint on the same port (Linux)
+            sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            try:
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                sock.bind((bind_host, port))
+                return await loop.create_datagram_endpoint(
+                    lambda: _DatagramProtocol(self), sock=sock
+                )
+            except BaseException:
+                sock.close()
+                raise
         return await loop.create_datagram_endpoint(
             lambda: _DatagramProtocol(self), local_addr=(bind_host, port)
         )

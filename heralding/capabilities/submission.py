@@ -15,11 +15,8 @@
 
 """Message submission (port 587): SMTP with STARTTLS; AUTH is logged before and after TLS."""
 
-import ssl
-
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.capabilities.smtp import SMTPHandler, smtp
-from heralding.misc import certs
 
 
 class Submission(smtp):
@@ -27,21 +24,6 @@ class Submission(smtp):
     PERSONA_NAME = "smtp"  # banners come from the persona's smtp entry
     TLS = "starttls"
     NEEDS_CERT = True
-
-    def __init__(self, options):
-        super().__init__(options)
-        self._tls_context = None
-
-    def _context(self) -> ssl.SSLContext:
-        if self._tls_context is None:
-            psd = self.options.get("protocol_specific_data") or {}
-            pem = certs.ensure_cert(f"{self.NAME}.pem", psd.get("cert"))
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            min_version = psd.get("tls_min_version") or "TLSv1_2"
-            ctx.minimum_version = getattr(ssl.TLSVersion, str(min_version), ssl.TLSVersion.TLSv1_2)
-            ctx.load_cert_chain(pem)
-            self._tls_context = ctx
-        return self._tls_context
 
     async def execute_capability(self, reader, writer, session):
         session.set_auxiliary_data({"starttls": False})
@@ -53,7 +35,7 @@ class Submission(smtp):
             self._options,
             banner=self.persona_value("banner", "ESMTP"),
             ehlo_hostname=persona.fqdn if persona is not None else None,
-            tls_context=self._context(),
+            tls_context=self.starttls_context,
             fqdn=self.explicit_fqdn,
         )
         await handler._handle_client()

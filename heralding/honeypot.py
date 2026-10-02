@@ -123,7 +123,7 @@ class Honeypot:
             port = int(cap_cfg["port"])
             cap = cls(cap_cfg)
             ssl_context = None
-            if cls.TLS == "implicit" or cls.NEEDS_CERT:
+            if cls.TLS == "implicit" or (cls.NEEDS_CERT and cls.TLS != "starttls"):
                 psd = cap_cfg.get("protocol_specific_data") or {}
                 pem_file = certs.ensure_cert(
                     f"{cap_name}.pem",
@@ -135,6 +135,8 @@ class Honeypot:
                         "tls_min_version", "TLSv1_2"
                     )
                     ssl_context = self.create_ssl_context(pem_file, min_version)
+            if cls.TLS == "starttls" or getattr(cls, "OFFER_AUTH_TLS", False):
+                self._attach_starttls(cap, cap_name, cap_cfg)
             try:
                 server = await cap.create_server(bind_host, port, ssl_context)
             except OSError as exc:
@@ -196,6 +198,28 @@ class Honeypot:
         await common.cancel_all_pending_tasks()
 
         logger.info("All tasks were stopped.")
+
+    def _attach_starttls(self, cap, cap_name, cap_cfg):
+        """Build the in-band TLS context once; a broken certificate disables only the upgrade."""
+        psd = cap_cfg.get("protocol_specific_data") or {}
+        try:
+            pem_file = certs.ensure_cert(
+                f"{cap_name}.pem",
+                self._cert_subject(psd.get("cert")),
+                persona_tag=self.persona.fqdn,
+            )
+            min_version = psd.get("tls_min_version") or self.config.get(
+                "tls_min_version", "TLSv1_2"
+            )
+            cap.starttls_context = self.create_ssl_context(pem_file, min_version)
+        except (OSError, ValueError, AttributeError, ssl.SSLError) as exc:
+            cap.starttls_context = None
+            logger.warning(
+                "%s: STARTTLS / AUTH TLS disabled, certificate not usable [%s] %s",
+                cap_name,
+                type(exc).__name__,
+                exc,
+            )
 
     def _cert_subject(self, cert_cfg):
         """Explicit certificate subject fields win; unset ones ("None", "", "*") come from the persona."""

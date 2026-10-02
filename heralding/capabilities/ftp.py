@@ -22,10 +22,8 @@
 # and such derivative works.
 
 import logging
-import ssl
 
 from heralding.capabilities.handlerbase import HandlerBase
-from heralding.misc import certs
 from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
@@ -176,20 +174,6 @@ class ftp(HandlerBase):
     def __init__(self, options):
         super().__init__(options)
         self._options = options
-        self._tls_context = None
-
-    def _context(self):
-        if not self.OFFER_AUTH_TLS:
-            return None
-        if self._tls_context is None:
-            psd = self.options.get("protocol_specific_data") or {}
-            pem = certs.ensure_cert(f"{self.NAME}.pem", psd.get("cert"))
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            min_version = psd.get("tls_min_version") or "TLSv1_2"
-            ctx.minimum_version = getattr(ssl.TLSVersion, str(min_version), ssl.TLSVersion.TLSv1_2)
-            ctx.load_cert_chain(pem)
-            self._tls_context = ctx
-        return self._tls_context
 
     async def execute_capability(self, reader, writer, session):
         if self.OFFER_AUTH_TLS:
@@ -201,6 +185,6 @@ class ftp(HandlerBase):
             session,
             banner=self.persona_value("banner", "FTP Server"),
             syst_type=self.persona_value("syst_type", "UNIX Type: L8"),
-            tls_context=self._context(),
+            tls_context=self.starttls_context if self.OFFER_AUTH_TLS else None,
         )
         await ftp_cap.serve()

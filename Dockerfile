@@ -12,7 +12,7 @@ WORKDIR /opt/heralding
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY heralding ./heralding
-RUN uv sync --locked --no-dev
+RUN uv sync --locked --no-dev --no-editable
 
 FROM python:3.14-alpine
 RUN apk --no-cache add libcap \

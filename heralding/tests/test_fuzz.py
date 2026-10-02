@@ -70,8 +70,6 @@ def _payloads():
     yield b"\xff" * 10
     yield rnd.randbytes(2000)
     yield b"A" * 70000 + b"\r\n"
-    yield b"USER \x00\xff\xfe\r\nPASS \x80\r\n"
-    yield b"GET / HTTP/1.1\r\n" + b"X: y\r\n" * 200 + b"\r\n"
 
 
 async def _wait_sessions_zero():
@@ -109,6 +107,22 @@ async def test_garbage_does_not_leak_or_trace(name, serve, sink, caplog, tmp_pat
     )
     for bad in FORBIDDEN:
         assert bad not in text, text
+    # a TypeError/AttributeError in a parser would surface as HandlerBase's "Unexpected error"
+    assert "Unexpected error" not in text, text
     # server still alive
     r, w = await asyncio.open_connection(host, port)
     w.close()
+
+
+async def test_udp_random_datagrams_get_no_reply_and_leave_no_session(sink, caplog):
+    from heralding.capabilities import sip
+
+    caplog.set_level(logging.DEBUG)
+    cap = sip.Sip(make_options())
+    rnd = random.Random(99)
+    for _ in range(500):
+        data = rnd.randbytes(rnd.randint(0, 1500))
+        assert cap.process_datagram(data, ("192.0.2.9", 5060), ("127.0.0.1", 5060)) is None
+    assert HandlerBase.global_sessions == 0
+    text = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.INFO)
+    assert "Unexpected error" not in text

@@ -108,3 +108,24 @@ def windows_persona():
     HandlerBase.set_persona(p)
     yield p
     HandlerBase.set_persona(None)
+
+
+async def test_attempts_per_connection_are_capped(serve, sink):
+    host, port = await serve(ldap.Ldap(make_options(max_attempts=3)))
+
+    def run():
+        conn = ldap3.Connection(_server(host, port), receive_timeout=5)
+        conn.open()
+        for i in range(10):
+            try:
+                conn.rebind(user=f"cn=u{i}", password="pw")
+            except ldap3.core.exceptions.LDAPException:
+                break
+            if conn.closed:
+                break
+
+    await asyncio.to_thread(run)
+    await asyncio.to_thread(sink.wait_for_auth, 3)
+    await asyncio.sleep(0.2)
+    first_session = sink.auth[0]["session_id"]
+    assert sum(1 for a in sink.auth if a["session_id"] == first_session) == 3

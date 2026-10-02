@@ -58,3 +58,22 @@ async def test_bind_host_list_binds_all(sink):
     finally:
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.skipif(not socket.has_ipv6, reason="no IPv6 on this host")
+async def test_udp_endpoint_on_ipv6_is_v6only(sink):
+    """asyncio sets IPV6_V6ONLY for TCP but not for UDP; without it "::" collides with 0.0.0.0."""
+    from heralding.capabilities import sip
+
+    cap = sip.Sip(make_options())
+    transport, _ = await cap.create_datagram_endpoint("::", 0)
+    ipv4_transport = None
+    try:
+        sock = transport.get_extra_info("socket")
+        assert sock.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY) == 1
+        port = transport.get_extra_info("sockname")[1]
+        ipv4_transport, _ = await cap.create_datagram_endpoint("0.0.0.0", port)
+    finally:
+        if ipv4_transport is not None:
+            ipv4_transport.close()
+        transport.close()

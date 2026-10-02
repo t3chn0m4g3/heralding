@@ -37,6 +37,11 @@ SYNTAX = b"-ERR syntax error\r\n"
 class Redis(HandlerBase):
     NAME = "redis"
 
+    def __init__(self, options):
+        super().__init__(options)
+        psd = options.get("protocol_specific_data") or {}
+        self.max_attempts = int(psd.get("max_attempts", 10))
+
     async def execute_capability(self, reader, writer, session):
         while session.connected:
             args = await self._read_command(reader)
@@ -55,7 +60,11 @@ class Redis(HandlerBase):
                 await self._auth(session, writer, rest)
             elif command == "HELLO":
                 await self._hello(session, writer, rest)
-            elif command == "QUIT":
+            if session.get_number_of_login_attempts() >= self.max_attempts:
+                break
+            if command in ("AUTH", "HELLO"):
+                continue
+            if command == "QUIT":
                 writer.write(b"+OK\r\n")
                 await writer.drain()
                 break

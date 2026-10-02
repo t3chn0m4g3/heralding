@@ -12,3 +12,5 @@ persona.state
 *.csv
 log_session.json
 docs
+
+heralding/tests

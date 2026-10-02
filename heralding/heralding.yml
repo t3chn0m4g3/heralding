@@ -256,6 +256,8 @@ capabilities:
     enabled: true
     port: 6379
     timeout: 30
+    protocol_specific_data:
+      max_attempts: 10
 
   sip:
     enabled: true
@@ -274,12 +276,15 @@ capabilities:
     enabled: true
     port: 389
     timeout: 30
+    protocol_specific_data:
+      max_attempts: 10
 
   ldaps:
     enabled: true
     port: 636
     timeout: 30
     protocol_specific_data:
+      max_attempts: 10
       cert:
         common_name: "*"
         country: "US"
