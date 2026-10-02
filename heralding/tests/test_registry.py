@@ -18,6 +18,9 @@ EXPECTED = {
     "mysql": None,
     "postgresql": None,
     "rdp": None,
+    "redis": None,
+    "mqtt": None,
+    "mqtts": "implicit",
 }
 
 
