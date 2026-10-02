@@ -12,6 +12,7 @@ from heralding.capabilities import (  # noqa: F401
     ldaps,
     mqtt,
     mqtts,
+    mssql,
     mysql,
     pop3,
     pop3s,

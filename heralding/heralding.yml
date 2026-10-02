@@ -256,6 +256,14 @@ capabilities:
     port: 6379
     timeout: 30
 
+  mssql:
+    enabled: true
+    port: 1433
+    timeout: 30
+    protocol_specific_data:
+      # SQL Server version reported in PRELOGIN; empty = from persona
+      version: ""
+
   ldap:
     enabled: true
     port: 389

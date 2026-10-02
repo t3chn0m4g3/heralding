@@ -26,6 +26,7 @@ EXPECTED = {
     "ftps": "implicit",
     "ldap": None,
     "ldaps": "implicit",
+    "mssql": None,
 }
 
 

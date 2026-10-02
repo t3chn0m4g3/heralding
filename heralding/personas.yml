@@ -26,6 +26,7 @@ ubuntu-24.04:
     mysql: { version: "8.0.37-0ubuntu0.24.04.1" }
     redis: { version: "7.0.15" }
     ldap: { vendor_name: "OpenLDAP", vendor_version: "2.6.7", naming_context: "dc=internal" }
+    mssql: { version: "15.0.4236.7", product: "Microsoft SQL Server 2019 (RTM-CU22) - 15.0.4236.7 (X64) on Linux (Ubuntu 24.04)" }
     vnc: {}
     rdp: {}
 
@@ -54,6 +55,7 @@ debian-12:
     mysql: { version: "10.11.6-MariaDB-0+deb12u1" }
     redis: { version: "7.0.15" }
     ldap: { vendor_name: "OpenLDAP", vendor_version: "2.5.13", naming_context: "dc=lan" }
+    mssql: { version: "16.0.4125.3", product: "Microsoft SQL Server 2022 (RTM-CU13) - 16.0.4125.3 (X64) on Linux (Debian 12)" }
     vnc: {}
     rdp: {}
 
@@ -82,6 +84,7 @@ rhel-9:
     mysql: { version: "8.0.36" }
     redis: { version: "7.2.4" }
     ldap: { vendor_name: "389 Project", vendor_version: "389-Directory/2.4.5", naming_context: "dc=corp,dc=local" }
+    mssql: { version: "16.0.4125.3", product: "Microsoft SQL Server 2022 (RTM-CU13) - 16.0.4125.3 (X64) on Linux (Red Hat Enterprise Linux 9.4)" }
     vnc: {}
     rdp: {}
 
@@ -110,6 +113,7 @@ windows-server-2019:
     mysql: { version: "8.0.31" }
     redis: { version: "5.0.14.1" }
     ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.17763", naming_context: "DC=corp,DC=local" }
+    mssql: { version: "15.0.2000.5", product: "Microsoft SQL Server 2019 (RTM) - 15.0.2000.5 (X64) on Windows Server 2019 Standard" }
     vnc: {}
     rdp: {}
 
@@ -138,5 +142,6 @@ windows-server-2022:
     mysql: { version: "8.0.36" }
     redis: { version: "5.0.14.1" }
     ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.20348", naming_context: "DC=ad,DC=local" }
+    mssql: { version: "16.0.1000.6", product: "Microsoft SQL Server 2022 (RTM) - 16.0.1000.6 (X64) on Windows Server 2022 Standard" }
     vnc: {}
     rdp: {}
