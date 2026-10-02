@@ -9,7 +9,7 @@ About
 -----
 
 Sometimes you just want a simple honeypot that collects credentials, nothing more. Heralding is that honeypot!
-Currently the following protocols are supported: ftp, telnet, ssh, http, https, pop3, pop3s, imap, imaps, smtp, smtps, vnc, postgresql, mysql, rdp, socks5 and redis.
+Currently the following protocols are supported: ftp, telnet, ssh, http, https, pop3, pop3s, imap, imaps, smtp, smtps, vnc, postgresql, mysql, rdp, socks5, redis, mqtt and mqtts.
 
 **You need Python 3.14 or higher.** Dependencies are managed with `uv <https://docs.astral.sh/uv/>`_.
 

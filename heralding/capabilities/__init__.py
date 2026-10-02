@@ -6,6 +6,8 @@ from heralding.capabilities import (  # noqa: F401
     https,
     imap,
     imaps,
+    mqtt,
+    mqtts,
     mysql,
     pop3,
     pop3s,

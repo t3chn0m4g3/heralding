@@ -221,6 +221,26 @@ capabilities:
     port: 6379
     timeout: 30
 
+  mqtt:
+    enabled: true
+    port: 1883
+    timeout: 30
+
+  mqtts:
+    enabled: true
+    port: 8883
+    timeout: 30
+    protocol_specific_data:
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
+        valid_days: 365
+        serial_number: 0
+
   rdp:
     enabled: true
     port: 3389
