@@ -24,6 +24,8 @@ EXPECTED = {
     "http_proxy": None,
     "submission": "starttls",
     "ftps": "implicit",
+    "ldap": None,
+    "ldaps": "implicit",
 }
 
 

@@ -8,6 +8,8 @@ from heralding.capabilities import (  # noqa: F401
     https,
     imap,
     imaps,
+    ldap,
+    ldaps,
     mqtt,
     mqtts,
     mysql,

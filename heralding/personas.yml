@@ -25,6 +25,7 @@ ubuntu-24.04:
     ssh: { banner: "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.5" }
     mysql: { version: "8.0.37-0ubuntu0.24.04.1" }
     redis: { version: "7.0.15" }
+    ldap: { vendor_name: "OpenLDAP", vendor_version: "2.6.7", naming_context: "dc=internal" }
     vnc: {}
     rdp: {}
 
@@ -52,6 +53,7 @@ debian-12:
     ssh: { banner: "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3" }
     mysql: { version: "10.11.6-MariaDB-0+deb12u1" }
     redis: { version: "7.0.15" }
+    ldap: { vendor_name: "OpenLDAP", vendor_version: "2.5.13", naming_context: "dc=lan" }
     vnc: {}
     rdp: {}
 
@@ -79,6 +81,7 @@ rhel-9:
     ssh: { banner: "SSH-2.0-OpenSSH_8.7" }
     mysql: { version: "8.0.36" }
     redis: { version: "7.2.4" }
+    ldap: { vendor_name: "389 Project", vendor_version: "389-Directory/2.4.5", naming_context: "dc=corp,dc=local" }
     vnc: {}
     rdp: {}
 
@@ -106,6 +109,7 @@ windows-server-2019:
     ssh: { banner: "SSH-2.0-OpenSSH_for_Windows_8.1" }
     mysql: { version: "8.0.31" }
     redis: { version: "5.0.14.1" }
+    ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.17763", naming_context: "DC=corp,DC=local" }
     vnc: {}
     rdp: {}
 
@@ -133,5 +137,6 @@ windows-server-2022:
     ssh: { banner: "SSH-2.0-OpenSSH_for_Windows_9.5" }
     mysql: { version: "8.0.36" }
     redis: { version: "5.0.14.1" }
+    ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.20348", naming_context: "DC=ad,DC=local" }
     vnc: {}
     rdp: {}

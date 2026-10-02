@@ -256,6 +256,26 @@ capabilities:
     port: 6379
     timeout: 30
 
+  ldap:
+    enabled: true
+    port: 389
+    timeout: 30
+
+  ldaps:
+    enabled: true
+    port: 636
+    timeout: 30
+    protocol_specific_data:
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
+        valid_days: 365
+        serial_number: 0
+
   http_proxy:
     enabled: true
     port: 8080
