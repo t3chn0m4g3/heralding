@@ -22,6 +22,8 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
   discarded, startup TLS contexts, certificate regeneration on configuration edits,
   RDP channel negotiation, persistent SIP TCP and corrected Hashcat SIP export.
 - Standard clients across the suite; optional sinks and privilege changes tested.
+  The actual hpfeeds3 client uses bounded socket I/O and a single connection attempt;
+  library authentication and publishing are checked against a local test broker.
 - T-Pot integration adds only free ports and accepts both SOCKS5 reply versions.
 - Behaviour changes: SOCKS5 replies follow RFC 1929; MySQL logins have an empty `password` and the
   challenge material in `password_hash`; VNC `password_hash` is a string.
