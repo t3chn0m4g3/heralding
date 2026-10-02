@@ -13,11 +13,12 @@ class BerError(ValueError):
 
 
 class Element:
-    __slots__ = ("tag", "value")
+    __slots__ = ("tag", "value", "depth")
 
-    def __init__(self, tag: int, value: bytes):
+    def __init__(self, tag: int, value: bytes, depth: int = 0):
         self.tag = tag
         self.value = value
+        self.depth = depth
 
     @property
     def constructed(self) -> bool:
@@ -36,7 +37,8 @@ class Element:
             raise BerError("empty integer")
         return int.from_bytes(self.value, "big", signed=True)
 
-    def children(self, depth: int = 0) -> list[Element]:
+    def children(self, depth: int | None = None) -> list[Element]:
+        depth = self.depth if depth is None else max(depth, self.depth)
         if depth > MAX_DEPTH:
             raise BerError("nesting too deep")
         return decode_all(self.value, depth + 1)
@@ -61,7 +63,9 @@ def read_length(data: bytes, pos: int) -> tuple[int, int]:
     return length, pos + count
 
 
-def decode_one(data: bytes, pos: int = 0) -> tuple[Element, int]:
+def decode_one(data: bytes, pos: int = 0, depth: int = 0) -> tuple[Element, int]:
+    if depth > MAX_DEPTH:
+        raise BerError("nesting too deep")
     if pos >= len(data):
         raise BerError("truncated element")
     tag = data[pos]
@@ -71,7 +75,10 @@ def decode_one(data: bytes, pos: int = 0) -> tuple[Element, int]:
     end = pos + length
     if end > len(data):
         raise BerError("truncated value")
-    return Element(tag, data[pos:end]), end
+    element = Element(tag, data[pos:end], depth)
+    if element.constructed:
+        decode_all(element.value, depth + 1)
+    return element, end
 
 
 def decode_all(data: bytes, depth: int = 0) -> list[Element]:
@@ -80,7 +87,7 @@ def decode_all(data: bytes, depth: int = 0) -> list[Element]:
     elements = []
     pos = 0
     while pos < len(data):
-        element, pos = decode_one(data, pos)
+        element, pos = decode_one(data, pos, depth)
         elements.append(element)
         if len(elements) > 256:
             raise BerError("too many elements")

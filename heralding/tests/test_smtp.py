@@ -145,7 +145,9 @@ async def test_ehlo_advertises_size_limit(serve, sink):
     assert "auth" in features
 
 
-def test_explicit_fqdn_is_not_overwritten_by_lookup_or_persona():
+def test_explicit_fqdn_is_not_overwritten_by_lookup_or_persona(monkeypatch):
+    monkeypatch.setattr(smtp.SMTPHandler, "fqdn", "")
+    monkeypatch.setattr(smtp.SMTPHandler, "_fqdn_from_persona", False)
     cap = smtp.smtp(make_options(banner="b", fqdn="fixed.example"))
     smtp.set_fqdn("looked-up.example", source="lookup")
     smtp.set_fqdn("persona.example", source="persona")

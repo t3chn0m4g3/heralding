@@ -109,7 +109,8 @@ def test_session_start_event_does_not_alias_live_lists(tmp_path):
     assert start_event["auth_attempts"] == []  # a copy taken at emit time, not the live list
 
 
-async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch):
+@pytest.mark.parametrize("fixture_name", ["tpot_heralding.yml", "tpot_heralding_2.yml"])
+async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch, fixture_name):
     """Review focus 1: T-Pot's config (no persona key, mysql without protocol_specific_data)."""
     from heralding.capabilities import smtp
     from heralding.capabilities.handlerbase import HandlerBase
@@ -117,7 +118,7 @@ async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch):
     from heralding.reporting.memory_sink import MemorySink
 
     monkeypatch.chdir(tmp_path)
-    config = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
+    config = yaml.safe_load((FIXTURES / fixture_name).read_text())
     config["public_ip_as_destination_ip"] = False
     config["bind_host"] = "127.0.0.1"
     for cap in config["capabilities"].values():
@@ -129,7 +130,7 @@ async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch):
     honeypot = Honeypot(config)
     try:
         await honeypot.start()
-        assert len(honeypot._servers) == 16
+        assert len(honeypot._servers) == len(config["capabilities"])
         assert HandlerBase.persona is not None
         # CRAM-MD5 challenges use the persona FQDN, never the container's real host name
         assert smtp.SMTPHandler.fqdn == HandlerBase.persona.fqdn

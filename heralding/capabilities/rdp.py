@@ -19,10 +19,12 @@ import struct
 
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.libs.msrdp.parser import (
+    AttachUserRequestPDU,
     ClientInfoPDU,
     ErectDomainRequestPDU,
     InvalidExpectedData,
     MCSChannelJoinRequestPDU,
+    client_channel_count,
     tpktPDUParser,
     x224ConnectionRequestPDU,
 )
@@ -32,9 +34,7 @@ from heralding.libs.msrdp.pdu import (
     MCSConnectResponsePDU,
     x224ConnectionConfirmPDU,
 )
-from heralding.libs.msrdp.security import ServerSecurity
 from heralding.libs.msrdp.tls import TLS, TLSHandshakeError
-from heralding.misc import certs
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 class RDP(HandlerBase):
     NAME = "rdp"
     NEEDS_CERT = True  # TLS is negotiated inside the RDP flow (libs/msrdp/tls.py)
+    tls_context = None  # loaded once by Honeypot.start(), survives removal of the PEM
 
     # will parse the TPKT header and read the entire packet (TPKT + payload)
     async def recv_next_tpkt(self, reader, tlsObj=None):
@@ -57,7 +58,10 @@ class RDP(HandlerBase):
             # read remaining byets
             data += await tlsObj.read_tls(read_len)
         else:
-            data = await reader.read(2048)
+            data = await reader.readexactly(4)
+            tpkt = tpktPDUParser()
+            tpkt.parse(data)
+            data += await reader.readexactly(tpkt.length - 4)
 
         return data
 
@@ -99,20 +103,17 @@ class RDP(HandlerBase):
 
             # TLS Upgrade start
             logger.debug("RDP TLS initilization")
-            pem_file = certs.ensure_cert(
-                "rdp.pem", (self.options.get("protocol_specific_data") or {}).get("cert")
-            )
-            tls_obj = TLS(
-                writer, reader, pem_file, min_version=self.persona_value("tls_min_version", "TLSv1")
-            )
+            if self.tls_context is None:
+                logger.warning("RDP TLS context is not initialized")
+                return
+            tls_obj = TLS(writer, reader, context=self.tls_context)
             await tls_obj.do_tls_handshake()
 
             # Now using send_data and recv_next_tpkt
             data = await self.recv_next_tpkt(reader, tls_obj)
 
-            # This packet includes ServerSecurity data
-            server_sec = ServerSecurity()
-            mcs_cres = MCSConnectResponsePDU(client_reqProto, server_sec).getFullPacket()
+            channel_count = client_channel_count(data)
+            mcs_cres = MCSConnectResponsePDU(client_reqProto, channel_count).getFullPacket()
             await self.send_data(writer, mcs_cres, tls_obj)
 
             data = await self.recv_next_tpkt(reader, tls_obj)
@@ -127,6 +128,8 @@ class RDP(HandlerBase):
             logger.debug("Received: ErectDomainRequest" + repr(data))
 
             data = await self.recv_next_tpkt(reader, tls_obj)
+            if not AttachUserRequestPDU.checkPDU(data):
+                raise InvalidExpectedData("Expected Attach User Request")
             logger.debug("Received: Attach User request : " + repr(data))
 
             mcs_usrcnf = MCSAttachUserConfirmPDU().getFullPacket()
@@ -134,7 +137,7 @@ class RDP(HandlerBase):
             logger.debug("Sent: Attach User Confirm")
 
             # Handle multiple Channel Join request PUDs
-            for _ in range(7):
+            for _ in range(channel_count + 3):
                 # data = await reader.read(2048)
                 data = await self.recv_next_tpkt(reader, tls_obj)
                 if not data:

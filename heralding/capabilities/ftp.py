@@ -25,6 +25,7 @@ import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.misc.textutil import decode_lossless
+from heralding.misc.tls import upgrade_stream
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ class FtpHandler:
             await self.respond("504 Unknown security mechanism.")
             return
         await self.respond("234 AUTH TLS successful.")
-        await self.writer.start_tls(self.tls_context, ssl_handshake_timeout=10)
+        await upgrade_stream(self.reader, self.writer, self.tls_context)
         self.tls_active = True
         self.session.set_auxiliary_data({"starttls": True})
 

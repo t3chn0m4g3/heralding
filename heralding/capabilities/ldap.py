@@ -141,7 +141,7 @@ class Ldap(HandlerBase):
 
     def _rootdse(self):
         naming = self.persona_value("naming_context", "dc=example,dc=com")
-        return {
+        attrs = {
             "objectClass": ["top", "OpenLDAProotDSE"],
             "vendorName": [self.persona_value("vendor_name", "OpenLDAP")],
             "vendorVersion": [self.persona_value("vendor_version", "2.6.7")],
@@ -151,6 +151,16 @@ class Ldap(HandlerBase):
             "supportedSASLMechanisms": ["PLAIN", "DIGEST-MD5", "GSSAPI"],
             "supportedControl": ["1.2.840.113556.1.4.319"],
         }
+        persona = HandlerBase.persona
+        if persona is not None and persona.os_family == "windows":
+            attrs["objectClass"] = ["top"]
+            attrs["supportedCapabilities"] = ["1.2.840.113556.1.4.800"]
+            attrs["dnsHostName"] = [persona.fqdn]
+            attrs["rootDomainNamingContext"] = [naming]
+            attrs["configurationNamingContext"] = ["CN=Configuration," + naming]
+            attrs["schemaNamingContext"] = ["CN=Schema,CN=Configuration," + naming]
+            attrs["supportedSASLMechanisms"] = ["GSSAPI", "GSS-SPNEGO", "EXTERNAL", "DIGEST-MD5"]
+        return attrs
 
     @staticmethod
     async def _reply(writer, message_id, tag, body):

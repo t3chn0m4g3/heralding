@@ -21,9 +21,20 @@ def _rdp_options(**extra):
     )
 
 
-def test_server_random_is_random_and_key_is_lazy():
-    from heralding.libs.msrdp import security
+def test_tls_server_data_has_no_proprietary_rsa_material():
+    import struct
 
-    a, b = security.ServerSecurity(), security.ServerSecurity()
-    assert a.server_random != b.server_random and len(a.server_random) == 32
-    assert security.getRSAKeys() is security.getRSAKeys()  # cached, created on first use
+    from heralding.libs.msrdp.pdu import ServerData
+
+    # Inspect generated server data only; client wire validation uses FreeRDP.
+    data = ServerData.generate(1, channel_count=4)
+    pos = 0
+    blocks = {}
+    while pos < len(data):
+        kind, length = struct.unpack_from("<HH", data, pos)
+        blocks[kind] = data[pos : pos + length]
+        pos += length
+    assert len(blocks[0x0C02]) == 12
+    assert struct.unpack_from("<II", blocks[0x0C02], 4) == (0, 0)
+    assert struct.unpack_from("<HH", blocks[0x0C03], 4) == (1003, 4)
+    assert struct.unpack_from("<4H", blocks[0x0C03], 8) == (1004, 1005, 1006, 1007)

@@ -12,7 +12,6 @@ dependencies = [
     "pycryptodome>=3.23",
     "cryptography>=46",
     "PyYAML>=6.0.3",
-    "rsa>=4.9",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +40,8 @@ dev = [
     "python-socks>=2.5",
     "vncdotool>=1.2",
     "audioop-lts>=0.2",  # audioop was removed in 3.13; pyVoIP imports it
+    "telnetlib3>=5.0.1",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -77,3 +78,14 @@ filterwarnings = [
     "ignore::DeprecationWarning:ldap3.*",
     "ignore:TripleDES has been moved:cryptography.utils.CryptographyDeprecationWarning",
 ]
+
+[tool.coverage.run]
+branch = true
+patch = ["subprocess"]
+source = ["heralding"]
+omit = ["*/heralding/tests/*"]
+
+[tool.coverage.report]
+omit = ["*/heralding/tests/*"]
+show_missing = true
+skip_empty = true

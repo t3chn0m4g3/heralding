@@ -126,8 +126,12 @@ class tpktPDUParser:
 
     def parse(self, raw_data, pos=0):
         """Returs pos of the rest of the payload"""
-        _, pos = RawBytes(raw_data, None, 2, pos).readRaw()  # consume version and reserved
+        prefix, pos = RawBytes(raw_data, None, 2, pos).readRaw()
+        if prefix != b"\x03\x00":
+            raise InvalidExpectedData("Invalid TPKT header")
         self.length, pos = UInt16Be(raw_data, pos).read()
+        if self.length < 7:
+            raise InvalidExpectedData("Invalid TPKT length")
         return pos
 
 
@@ -167,6 +171,39 @@ class x224ConnectionRequestPDU:
         return pos
 
 
+def client_channel_count(raw_data):
+    """Read bounded GCC client data blocks from an MCS Connect Initial."""
+    marker = raw_data.find(b"Duca", 7)
+    if marker < 0:
+        raise InvalidExpectedData("Missing GCC client data")
+    pos = marker + 4
+    first, pos = UInt8(raw_data, pos).read()
+    if first & 0x80:
+        second, pos = UInt8(raw_data, pos).read()
+        length = ((first & 0x7F) << 8) | second
+    else:
+        length = first
+    end = pos + length
+    if end != len(raw_data):
+        raise InvalidExpectedData("Invalid GCC client data length")
+    count = 0
+    seen = set()
+    while pos < end:
+        block_type, _ = UInt16Le(raw_data, pos).read()
+        block_len, _ = UInt16Le(raw_data, pos + 2).read()
+        if block_len < 4 or pos + block_len > end or block_type in seen:
+            raise InvalidExpectedData("Invalid GCC client data block")
+        seen.add(block_type)
+        if block_type == 0xC003:
+            count, _ = UInt32Le(raw_data, pos + 4).read()
+            if count > 31 or block_len != 8 + count * 12:
+                raise InvalidExpectedData("Invalid client channel count")
+        pos += block_len
+    if 0xC001 not in seen:
+        raise InvalidExpectedData("Missing client core data")
+    return count
+
+
 class MCSChannelJoinRequestPDU:
     def __init__(self):
         self.header = None
@@ -181,7 +218,7 @@ class MCSChannelJoinRequestPDU:
             return -1
 
         self.initiator, pos = UInt16Be(raw_data, pos).read()
-        self.channelID, pso = UInt16Be(raw_data, pos).read()
+        self.channelID, pos = UInt16Be(raw_data, pos).read()
         return pos
 
 
@@ -215,24 +252,6 @@ class AttachUserRequestPDU:
             return True
 
         return False
-
-
-class ClientSecurityExcahngePDU:
-    def __init__(self):
-        self.secHeaderFlags = None
-        self.secPacketLen = None
-        self.encClientRandom = None
-
-    def parse(self, raw_data, pos=0):
-        pos = tpktPDUParser().parse(raw_data, 0)
-        pos = x224DataPDU().parse(raw_data, pos)
-        _, pos = RawBytes(raw_data, None, 8, pos).readRaw()  # 7 changed to 8
-        self.secHeaderFlags, pos = UInt16Le(raw_data, pos).read()
-        # +2 for skipkking bytes read
-        self.secPacketLen, pos = UInt32Le(raw_data, pos + 2).read()
-        # not reading last 8byte padding
-        self.encClientRandom, pos = RawBytes(raw_data, None, self.secPacketLen - 8, pos).readRaw()
-        return pos
 
 
 class ClientInfoPDU:

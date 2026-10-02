@@ -28,6 +28,7 @@ EXPECTED = {
     "ldaps": "implicit",
     "mssql": None,
     "sip": None,
+    "smb": None,
 }
 TRANSPORTS = {"sip": "tcp+udp"}
 

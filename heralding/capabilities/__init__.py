@@ -20,6 +20,7 @@ from heralding.capabilities import (  # noqa: F401
     rdp,
     redis,
     sip,
+    smb,
     smtp,
     smtps,
     socks5,

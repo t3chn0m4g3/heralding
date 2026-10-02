@@ -16,6 +16,8 @@
 # *** This file contains all the PDU required for RDP Protocol ***
 # each top tier PDU class will have a payload and generate method
 
+import struct
+
 from .packer import Int16BE, Uint16BE, Uint32LE
 
 
@@ -78,25 +80,23 @@ class x224ConnectionConfirmPDU:
 
 class ServerData:
     @classmethod
-    def generate(cls, cReqproto, serverSec):
+    def generate(cls, cReqproto, channel_count=0):
         # Servr Core data
         coreData_1 = b"\x01\x0c\x0c\x00\x04\x00\x08\x00"
         clientReqPro = Uint32LE.pack(cReqproto)
 
         # ServerNetwork Data
-        netData = b"\x03\x0c\x08\x00\xeb\x03\x00\x00"  # here channel count 0
-
-        # ServerSec Data
-        # here choosing encryption of 128bit by default method \x02\x00\x00\x00
-        part_1 = b"\x02\x0c\xec\x00\x00\x00\x00\x00\x00\x00\x00\x00\x20\x00\x00\x00\xb8\x00\x00\x00"
-        serverRandom = serverSec.server_random
-
-        # an instance of ServerSecurity class required
-        certData = serverSec.getServerCertBytes()
+        channels = b"".join(struct.pack("<H", 1004 + i) for i in range(channel_count))
+        if channel_count % 2:
+            channels += bytes(2)
+        netData = struct.pack("<HHHH", 0x0C03, 8 + len(channels), 1003, channel_count) + channels
+        # Enhanced RDP security uses the TLS certificate. No proprietary RSA
+        # certificate or random fields are allowed when method and level are zero.
+        security = struct.pack("<HHII", 0x0C02, 12, 0, 0)
         # ADD all
         serverCoreData = coreData_1 + clientReqPro
         serverNetData = netData
-        serverSecData = part_1 + serverRandom + certData
+        serverSecData = security
 
         return serverCoreData + serverNetData + serverSecData
 
@@ -104,12 +104,12 @@ class ServerData:
 class MCSConnectResponsePDU:
     """Server MCS Connect Response PDU with GCC Conference Create Response"""
 
-    def __init__(self, cReqproto, serverSec):
+    def __init__(self, cReqproto, channel_count=0):
         self.cReqproto = cReqproto
-        self.serverSec = serverSec
+        self.channel_count = channel_count
 
     def generate(self):
-        serverData = ServerData.generate(self.cReqproto, self.serverSec)
+        serverData = ServerData.generate(self.cReqproto, self.channel_count)
         serverDataLen = Uint16BE.pack(len(serverData) | 0x8000)
         gccCreateRes = (
             b"\x00\x05\x00\x14\x7c\x00\x01\x2a\x14\x76\x0a\x01\x01\x00\x01\xc0\x00\x4d\x63\x44\x6e"

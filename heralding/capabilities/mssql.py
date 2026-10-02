@@ -30,15 +30,24 @@ DEFAULT_VERSION = "15.0.2000.5"
 
 
 def _version_tuple(text):
-    parts = [int(p) for p in str(text).split(".")[:4]]
+    fields = str(text).split(".")
+    if not 1 <= len(fields) <= 4:
+        raise ValueError("MSSQL version must contain one to four numeric components")
+    parts = [int(p) for p in fields]
     while len(parts) < 4:
         parts.append(0)
     major, minor, build, sub = parts
-    return (major & 0xFF, minor & 0xFF, build & 0xFFFF, sub & 0xFFFF)
+    if not (0 <= major <= 255 and 0 <= minor <= 255 and 0 <= build <= 65535 and 0 <= sub <= 65535):
+        raise ValueError("MSSQL version component out of range")
+    return major, minor, build, sub
 
 
 class Mssql(HandlerBase):
     NAME = "mssql"
+
+    def __init__(self, options):
+        super().__init__(options)
+        self.version = _version_tuple(self.persona_value("version", DEFAULT_VERSION))
 
     async def execute_capability(self, reader, writer, session):
         packet_type, payload = await tds.read_packet(reader)
@@ -49,8 +58,7 @@ class Mssql(HandlerBase):
             options = tds.parse_prelogin(payload)
             encryption = options.get(tds.PRELOGIN_ENCRYPTION, b"")
             session.set_auxiliary_data({"client_encryption": encryption[0] if encryption else None})
-            version = _version_tuple(self.persona_value("version", DEFAULT_VERSION))
-            writer.write(tds.packet(tds.TYPE_TABULAR, tds.build_prelogin(version)))
+            writer.write(tds.packet(tds.TYPE_TABULAR, tds.build_prelogin(self.version)))
             await writer.drain()
             packet_type, payload = await tds.read_packet(reader)
             if packet_type is None:

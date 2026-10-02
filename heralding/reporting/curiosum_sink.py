@@ -32,7 +32,10 @@ class CuriosumSink(Sink):
     def close(self) -> None:
         if self._socket is not None:
             self._socket.close(0)
+            self._socket = None
+        if self._ctx is not None:
             self._ctx.term()
+            self._ctx = None
 
     def _send(self, topic, data) -> None:
         self._socket.send_string(f"{topic} {json.dumps(data)}", self._zmq.NOBLOCK)

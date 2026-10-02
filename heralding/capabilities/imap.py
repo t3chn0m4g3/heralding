@@ -55,10 +55,10 @@ class Imap(HandlerBase):
             if not raw_msg:
                 break
 
-            raw_msg_str = decode_lossless(raw_msg)
-            session.record_command(raw_msg_str.rstrip("\r\n"))
+            raw_msg_str = raw_msg.decode("utf-8", "surrogateescape")
+            session.record_command(decode_lossless(raw_msg).rstrip("\r\n"))
 
-            cmd_msg = raw_msg_str.rstrip().split(" ", 2)
+            cmd_msg = raw_msg_str.rstrip("\r\n").split(" ", 2)
             if len(cmd_msg) == 0:
                 continue
             elif len(cmd_msg) == 1:
@@ -152,7 +152,7 @@ class Imap(HandlerBase):
                 value, rest = self._read_quoted(rest)
             elif rest.startswith("{") and rest.endswith("}"):
                 size = int(rest[1:-1].rstrip("+"))
-                if size > 4096:
+                if not 0 <= size <= 4096:
                     raise ValueError("literal too large")
                 if not text.endswith("+}"):  # non-synchronising literals need no go-ahead
                     await self.send_message(writer, "+ ")
@@ -161,7 +161,7 @@ class Imap(HandlerBase):
                 rest = decode_lossless(await reader.readline()).rstrip("\r\n")
             else:
                 value, _, rest = rest.partition(" ")
-            values.append(value)
+            values.append(decode_lossless(value.encode("utf-8", "surrogateescape")))
         return values
 
     @staticmethod

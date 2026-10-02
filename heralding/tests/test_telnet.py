@@ -1,47 +1,32 @@
 import asyncio
 
+import telnetlib3
+
 from heralding.capabilities import telnet
 from heralding.tests.conftest import make_options
 
-IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
-
 
 async def _read_until(reader, writer, needle: bytes, timeout: float = 5.0) -> bytes:
-    """Read until `needle` appears, answering telnet option negotiation with refusals."""
     data = bytearray()
-    in_sub = False
     async with asyncio.timeout(timeout):
         while needle.lower() not in bytes(data).lower():
             chunk = await reader.read(256)
             if not chunk:
                 break
-            i = 0
-            while i < len(chunk):
-                b = chunk[i]
-                if b == IAC and i + 1 < len(chunk):
-                    cmd = chunk[i + 1]
-                    if cmd in (DO, DONT, WILL, WONT) and i + 2 < len(chunk):
-                        opt = chunk[i + 2]
-                        writer.write(bytes([IAC, WONT if cmd in (DO, DONT) else DONT, opt]))
-                        i += 3
-                        continue
-                    if cmd == SB:
-                        in_sub = True
-                    elif cmd == SE:
-                        in_sub = False
-                    i += 2
-                    continue
-                if not in_sub:
-                    data.append(b)
-                i += 1
-            await writer.drain()
+            data.extend(chunk)
     return bytes(data)
+
+
+async def _connect(host, port):
+    return await telnetlib3.open_connection(
+        host, port, encoding=False, connect_minwait=0.01, connect_maxwait=0.05
+    )
 
 
 async def test_invalid_login(serve, sink):
     cap = telnet.Telnet(make_options(max_attempts=3))
     host, port = await serve(cap)
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await _connect(host, port)
 
     prompt = await _read_until(reader, writer, b"Username: ")
     assert b"Username: " in prompt
@@ -63,7 +48,7 @@ async def test_overlong_line_is_truncated_not_fatal(serve, sink, caplog):
     caplog.set_level(logging.WARNING)
     cap = telnet.Telnet(make_options(max_attempts=3))
     host, port = await serve(cap)
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await _connect(host, port)
     await _read_until(reader, writer, b"Username: ")
     writer.write(b"A" * 5000 + b"\r\n")
     await writer.drain()
@@ -81,7 +66,7 @@ async def test_overlong_line_is_truncated_not_fatal(serve, sink, caplog):
 async def test_prompts_match_tpot_smoke(serve, sink):
     cap = telnet.Telnet(make_options(max_attempts=3))
     host, port = await serve(cap)
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await _connect(host, port)
     data = await _read_until(reader, writer, b"sername:")
     assert b"username:" in data.lower()
     writer.write(b"u\r\n")
@@ -94,7 +79,7 @@ async def test_prompts_match_tpot_smoke(serve, sink):
 async def test_latin1_password_is_logged(serve, sink):
     cap = telnet.Telnet(make_options(max_attempts=3))
     host, port = await serve(cap)
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await _connect(host, port)
     await _read_until(reader, writer, b"Username: ")
     writer.write(b"u\r\n")
     await writer.drain()
@@ -112,7 +97,7 @@ async def test_max_attempts_is_per_capability_instance(serve, sink):
     assert cap_two.max_tries == 2
     assert cap_five.max_tries == 5
     host, port = await serve(cap_two)
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await _connect(host, port)
     for i in range(2):
         await _read_until(reader, writer, b"Username: ")
         writer.write(f"u{i}\r\n".encode())
@@ -132,7 +117,7 @@ async def test_client_disconnect_ends_session_promptly(serve, sink):
 
     cap = telnet.Telnet(make_options(max_attempts=3))
     host, port = await serve(cap)
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await _connect(host, port)
     await _read_until(reader, writer, b"Username: ")
     writer.write(b"u\r\n")
     await writer.drain()
@@ -154,7 +139,7 @@ async def test_disconnect_at_password_prompt_ends_session(serve, sink):
 
     cap = telnet.Telnet(make_options(max_attempts=3))
     host, port = await serve(cap)
-    reader, writer = await asyncio.open_connection(host, port)
+    reader, writer = await _connect(host, port)
     await _read_until(reader, writer, b"Username: ")
     writer.write(b"u\r\n")
     await writer.drain()

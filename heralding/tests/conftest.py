@@ -36,7 +36,14 @@ async def serve(sink) -> Callable[..., Awaitable[tuple[str, int]]]:
     servers: list[asyncio.AbstractServer] = []
 
     async def _serve(capability, ssl_context: ssl.SSLContext | None = None) -> tuple[str, int]:
-        server = await capability.create_server("127.0.0.1", 0, ssl_context)
+        while True:
+            server = await capability.create_server("127.0.0.1", 0, ssl_context)
+            # ldap3 incorrectly excludes 65535; retain the kernel-assigned socket and retry
+            # only this unusable client port, rather than reserving and releasing a port.
+            if server.sockets[0].getsockname()[1] != 65535:
+                break
+            server.close()
+            await server.wait_closed()
         servers.append(server)
         host, port = server.sockets[0].getsockname()[:2]
         return host, port

@@ -1,4 +1,6 @@
+import asyncio
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -20,16 +22,6 @@ FORBIDDEN = (
 )
 
 
-def _free_ports(n):
-    socks = [socket.socket() for _ in range(n)]
-    for s in socks:
-        s.bind(("127.0.0.1", 0))
-    ports = [s.getsockname()[1] for s in socks]
-    for s in socks:
-        s.close()
-    return ports
-
-
 def _tpot_config(tmp_path):
     config = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
     config["public_ip_as_destination_ip"] = False
@@ -38,8 +30,8 @@ def _tpot_config(tmp_path):
         name = Path(config["activity_logging"]["file"][key]).name
         config["activity_logging"]["file"][key] = str(tmp_path / name)
     caps = config["capabilities"]
-    for cap, port in zip(caps, _free_ports(len(caps)), strict=True):
-        caps[cap]["port"] = port
+    for cap in caps:
+        caps[cap]["port"] = 0
     return config
 
 
@@ -93,22 +85,26 @@ def test_sigint_with_active_session_exits_promptly(tmp_path):
     config = _tpot_config(tmp_path)
     proc, log = _start(tmp_path, config)
     try:
-        _wait_started(proc, log)
-        # an attacker sits at the telnet password prompt while we shut down
-        sock = socket.create_connection(("127.0.0.1", config["capabilities"]["telnet"]["port"]), 5)
-        sock.settimeout(5)
-        buf = b""
-        while b"Username:" not in buf:
-            buf += sock.recv(256)
-        sock.sendall(b"eve\r\n")
-        buf = b""
-        while b"Password:" not in buf:
-            buf += sock.recv(256)
-        started = time.monotonic()
-        os.kill(proc.pid, signal.SIGINT)
-        assert proc.wait(timeout=10) == 0  # must not wait for the 30 s session timeout
-        assert time.monotonic() - started < 10
-        sock.close()
+        text = _wait_started(proc, log)
+        port = int(re.search(r"Started telnet capability listening on port (\d+)", text)[1])
+
+        async def client():
+            from heralding.tests.test_telnet import _connect, _read_until
+
+            reader, writer = await _connect("127.0.0.1", port)
+            try:
+                await _read_until(reader, writer, b"Username:")
+                writer.write(b"eve\r\n")
+                await writer.drain()
+                await _read_until(reader, writer, b"Password:")
+                started = time.monotonic()
+                os.kill(proc.pid, signal.SIGINT)
+                assert await asyncio.to_thread(proc.wait, timeout=10) == 0
+                assert time.monotonic() - started < 10
+            finally:
+                writer.close()
+
+        asyncio.run(client())
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -138,6 +134,7 @@ def test_port_conflict_fails_without_traceback(tmp_path):
     blocker = socket.socket()
     blocker.bind(("127.0.0.1", config["capabilities"]["ftp"]["port"]))
     blocker.listen(1)
+    config["capabilities"]["ftp"]["port"] = blocker.getsockname()[1]
     try:
         proc, log = _start(tmp_path, config)
         assert proc.wait(timeout=20) == 1

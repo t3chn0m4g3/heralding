@@ -25,6 +25,8 @@ import logging
 import ssl
 import warnings
 
+from heralding.misc.tls import minimum_version
+
 logger = logging.getLogger(__name__)
 
 _CHUNK = 4096
@@ -35,20 +37,19 @@ class TLSHandshakeError(Exception):
 
 
 class TLS:
-    def __init__(self, writer, reader, pem_file, min_version="TLSv1"):
+    def __init__(self, writer, reader, pem_file=None, min_version="TLSv1", context=None):
         self._in = ssl.MemoryBIO()
         self._out = ssl.MemoryBIO()
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        try:
+        ctx = context
+        if ctx is None:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             with warnings.catch_warnings():
                 # TLS 1.0/1.1 are deprecated in Python but still spoken by old mstsc clients;
                 # offering them is the point of this honeypot.
                 warnings.simplefilter("ignore", DeprecationWarning)
-                ctx.minimum_version = getattr(ssl.TLSVersion, str(min_version))
-        except AttributeError, ValueError:
-            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
-        ctx.load_cert_chain(pem_file)
+                ctx.minimum_version = minimum_version(min_version)
+            ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+            ctx.load_cert_chain(pem_file)
         self._ssl = ctx.wrap_bio(self._in, self._out, server_side=True)
         self.writer = writer
         self.reader = reader
@@ -93,7 +94,10 @@ class TLS:
         buf = b""
         while len(buf) < size:
             try:
-                buf += self._ssl.read(size - len(buf))
+                chunk = self._ssl.read(size - len(buf))
+                if not chunk:
+                    raise asyncio.IncompleteReadError(buf, size)
+                buf += chunk
             except ssl.SSLWantReadError:
                 try:
                     await self._feed()

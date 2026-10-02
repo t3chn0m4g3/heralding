@@ -47,12 +47,14 @@ async def test_per_ip_limit(serve, sink, restore_limits):
 async def test_session_counter_returns_to_zero(serve, sink):
     cap = pop3.Pop3(make_options(max_attempts=3, banner="+OK"))
     host, port = await serve(cap)
-    r, w = await asyncio.open_connection(host, port)
-    await r.readline()
-    w.write(b"QUIT\r\n")
-    await w.drain()
-    await r.read()
-    w.close()
+
+    def client():
+        import poplib
+
+        conn = poplib.POP3(host, port, timeout=5)
+        conn.quit()
+
+    await asyncio.to_thread(client)
     await _wait_sessions_zero()
     assert HandlerBase.global_sessions == 0
     assert not HandlerBase.sessions_per_ip

@@ -61,6 +61,7 @@ PLAIN_TCP = [
     "ldap",
     "mssql",
     "sip",
+    "smb",
 ]
 
 

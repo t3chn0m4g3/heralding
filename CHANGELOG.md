@@ -16,8 +16,13 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
 - RDP works again with TLS 1.0 to 1.3.
 - IPv6 listeners, auxiliary data with client command lines and SSH public-key attempts.
 - New services: redis, mqtt, mqtts, http_proxy, submission (STARTTLS), ftps and AUTH TLS on ftp,
-  ldap, ldaps, mssql, sip (UDP and TCP).
-- Docker image on `python:3.14-alpine`, non-root, read-only root filesystem.
+  ldap, ldaps, mssql, sip (UDP and TCP), smb (SMB2 with NTLMv1/v2).
+- Docker image on pinned `python:3.14-alpine`, non-root, read-only root filesystem.
+- Completion fixes: bounded BER nesting and UDP lifecycles, buffered STARTTLS plaintext
+  discarded, startup TLS contexts, certificate regeneration on configuration edits,
+  RDP channel negotiation, persistent SIP TCP and corrected Hashcat SIP export.
+- Standard clients across the suite; optional sinks and privilege changes tested.
+- T-Pot integration adds only free ports and accepts both SOCKS5 reply versions.
 - Behaviour changes: SOCKS5 replies follow RFC 1929; MySQL logins have an empty `password` and the
   challenge material in `password_hash`; VNC `password_hash` is a string.
 

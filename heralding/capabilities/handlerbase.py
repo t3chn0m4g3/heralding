@@ -15,13 +15,14 @@
 
 import asyncio
 import collections
+import ipaddress
 import logging
 import socket
 import ssl
 import struct
 import time
 
-from heralding.misc.session import Session
+from heralding.misc.session import Session, normalize_ip
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ class HandlerBase:
         )
         self.sessions[session.id] = session
         HandlerBase.global_sessions += 1
-        HandlerBase.sessions_per_ip[address[0]] += 1
+        HandlerBase.sessions_per_ip[session.source_ip] += 1
         logger.debug(
             "Accepted %s session on %s:%s from %s:%s. (%s)",
             self.NAME,
@@ -146,7 +147,9 @@ class HandlerBase:
     def _limit_reached(self, address) -> bool:
         if HandlerBase.global_sessions >= HandlerBase.max_sessions:
             reason = "global session limit"
-        elif HandlerBase.sessions_per_ip[address[0]] >= HandlerBase.max_sessions_per_ip:
+        elif (
+            HandlerBase.sessions_per_ip[normalize_ip(address[0])] >= HandlerBase.max_sessions_per_ip
+        ):
             reason = "per-ip session limit"
         else:
             return False
@@ -219,10 +222,15 @@ class DatagramHandlerBase(HandlerBase):
     REFILL_PER_SECOND = 5.0
     MAX_SOURCES = 4096
     MAX_REPLY_RATIO = 3  # reply bytes <= ratio * request bytes
+    GLOBAL_BUCKET_SIZE = 200
+    GLOBAL_REFILL_PER_SECOND = 100.0
 
     def __init__(self, options):
         super().__init__(options)
-        self._buckets: dict[str, tuple[float, float]] = {}
+        self._buckets = collections.OrderedDict()
+        self._udp_sessions = {}
+        self._idle_handles = {}
+        self._global_bucket = (float(self.GLOBAL_BUCKET_SIZE), time.monotonic())
 
     async def create_datagram_endpoint(self, bind_host, port):
         loop = asyncio.get_running_loop()
@@ -249,10 +257,21 @@ class DatagramHandlerBase(HandlerBase):
         tokens = min(self.BUCKET_SIZE, tokens + (now - last) * self.REFILL_PER_SECOND)
         if tokens < 1:
             self._buckets[source_ip] = (tokens, now)
+            self._buckets.move_to_end(source_ip)
             return False
         if len(self._buckets) >= self.MAX_SOURCES and source_ip not in self._buckets:
-            self._buckets.clear()  # crude but bounded
+            self._buckets.popitem(last=False)
         self._buckets[source_ip] = (tokens - 1, now)
+        self._buckets.move_to_end(source_ip)
+        global_tokens, global_last = self._global_bucket
+        global_tokens = min(
+            self.GLOBAL_BUCKET_SIZE,
+            global_tokens + (now - global_last) * self.GLOBAL_REFILL_PER_SECOND,
+        )
+        if global_tokens < 1:
+            self._global_bucket = (global_tokens, now)
+            return False
+        self._global_bucket = (global_tokens - 1, now)
         return True
 
     def handle_datagram(self, data: bytes, session) -> bytes | None:
@@ -260,9 +279,21 @@ class DatagramHandlerBase(HandlerBase):
         raise NotImplementedError
 
     def process_datagram(self, data: bytes, addr, local_addr) -> bytes | None:
-        if not self._allow(addr[0]):
+        if not self.valid_datagram(data) or not self._allow(addr[0]):
             return None
-        session = self.create_session(addr, local_addr)
+        key = (tuple(addr[:2]), tuple(local_addr[:2]))
+        session = self._udp_sessions.get(key)
+        if session is None:
+            if self._limit_reached(addr):
+                return None
+            session = self.create_session(addr, local_addr)
+            self._udp_sessions[key] = session
+        old_handle = self._idle_handles.pop(key, None)
+        if old_handle is not None:
+            old_handle.cancel()
+        self._idle_handles[key] = asyncio.get_running_loop().call_later(
+            self.timeout, self._expire_udp_session, key
+        )
         try:
             reply = self.handle_datagram(data, session)
         except Exception as exc:  # same policy as handle_session: never a traceback
@@ -273,8 +304,6 @@ class DatagramHandlerBase(HandlerBase):
             else:
                 self._warn_error(exc, session)
             reply = None
-        finally:
-            self.close_session(session)
         if reply and len(reply) > self.MAX_REPLY_RATIO * max(len(data), 1):
             logger.debug(
                 "%s reply suppressed: %d bytes for a %d byte request",
@@ -285,6 +314,22 @@ class DatagramHandlerBase(HandlerBase):
             return None
         return reply
 
+    def valid_datagram(self, data):
+        return bool(data)
+
+    def _expire_udp_session(self, key):
+        self._idle_handles.pop(key, None)
+        session = self._udp_sessions.pop(key, None)
+        if session is not None:
+            self.close_session(session)
+
+    def close_datagram_sessions(self):
+        for handle in self._idle_handles.values():
+            handle.cancel()
+        self._idle_handles.clear()
+        for key in list(self._udp_sessions):
+            self._expire_udp_session(key)
+
 
 class _DatagramProtocol(asyncio.DatagramProtocol):
     def __init__(self, capability):
@@ -294,8 +339,21 @@ class _DatagramProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
 
+    def connection_lost(self, exc):
+        self.capability.close_datagram_sessions()
+
     def datagram_received(self, data, addr):
         local = self.transport.get_extra_info("sockname") or ("0.0.0.0", self.capability.port)
+        if ipaddress.ip_address(local[0]).is_unspecified:
+            # A connected temporary UDP socket asks the kernel which local address routes
+            # to this peer; it sends no traffic and avoids logging 0.0.0.0 / ::.
+            family = socket.AF_INET6 if ":" in addr[0] else socket.AF_INET
+            try:
+                with socket.socket(family, socket.SOCK_DGRAM) as route:
+                    route.connect(addr)
+                    local = (route.getsockname()[0], local[1])
+            except OSError:
+                return
         reply = self.capability.process_datagram(data, addr, local)
         if reply:
             self.transport.sendto(reply, addr)

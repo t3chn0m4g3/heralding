@@ -65,12 +65,15 @@ def test_get_returns_none_for_unknown_key():
 # --- persona wiring into capabilities (Task 2) ---
 
 import asyncio  # noqa: E402
+import ftplib  # noqa: E402
+import poplib  # noqa: E402
 
 import yaml  # noqa: E402
 
 from heralding.capabilities import ftp, http, pop3, smtp, ssh  # noqa: E402
 from heralding.capabilities.handlerbase import HandlerBase  # noqa: E402
 from heralding.tests.conftest import make_options  # noqa: E402
+from heralding.tests.test_http import _get  # noqa: E402
 from heralding.tests.test_tpot_compat import FIXTURES  # noqa: E402
 
 
@@ -84,45 +87,45 @@ def windows_persona():
 
 async def test_persona_banner_used_when_config_empty(serve, sink, windows_persona):
     host, port = await serve(ftp.ftp(make_options(max_attempts=3, banner="", syst_type="")))
-    reader, writer = await asyncio.open_connection(host, port)
-    assert (await reader.readline()) == b"220 Microsoft FTP Service\r\n"
-    writer.write(b"SYST\r\n")
-    await writer.drain()
-    assert (await reader.readline()) == b"215 Windows_NT\r\n"
-    writer.close()
+
+    def run():
+        with ftplib.FTP() as client:
+            assert client.connect(host, port, timeout=5) == "220 Microsoft FTP Service"
+            assert client.sendcmd("SYST") == "215 Windows_NT"
+
+    await asyncio.to_thread(run)
 
 
 async def test_explicit_config_wins_for_tpot_fixture(serve, sink, windows_persona):
     cfg = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
     host, port = await serve(pop3.Pop3(cfg["capabilities"]["pop3"]))
-    reader, writer = await asyncio.open_connection(host, port)
-    assert (await reader.readline()) == b"+OK POP3 server ready\n"
-    writer.close()
+
+    def run():
+        client = poplib.POP3(host, port, timeout=5)
+        try:
+            assert client.getwelcome() == b"+OK POP3 server ready"
+        finally:
+            client.close()
+
+    await asyncio.to_thread(run)
     cap = ssh.SSH(cfg["capabilities"]["ssh"])
     assert cap.persona_value("banner") == "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.8"
 
 
 async def test_http_error_page_matches_persona(serve, sink, windows_persona):
     host, port = await serve(http.Http(make_options(banner="")))
-    reader, writer = await asyncio.open_connection(host, port)
-    writer.write(b"GET / HTTP/1.1\r\nHost: x\r\nAuthorization: Basic %%%\r\n\r\n")
-    await writer.drain()
-    raw = await asyncio.wait_for(reader.read(), 5)
-    assert b" 400 " in raw.split(b"\r\n")[0]
-    assert b"Server: Microsoft-IIS/10.0" in raw
-    assert b"Error response" not in raw and b"Python" not in raw
-    writer.close()
+    status, headers, body = await asyncio.to_thread(
+        _get, host, port, "/", {"Authorization": "Basic %%%"}
+    )
+    assert status == 400
+    assert headers["Server"] == "Microsoft-IIS/10.0"
+    assert b"Error response" not in body and b"Python" not in body
 
 
 async def test_head_has_no_body(serve, sink):
     host, port = await serve(http.Http(make_options(banner="x")))
-    reader, writer = await asyncio.open_connection(host, port)
-    writer.write(b"HEAD / HTTP/1.0\r\n\r\n")
-    await writer.drain()
-    raw = await asyncio.wait_for(reader.read(), 5)
-    head, _, body = raw.partition(b"\r\n\r\n")
-    assert b" 401 " in head and body == b""
-    writer.close()
+    status, _, body = await asyncio.to_thread(_get, host, port, "/", None, "HEAD")
+    assert status == 401 and body == b""
 
 
 def test_smtp_banner_contains_persona_hostname(windows_persona):
@@ -169,12 +172,10 @@ async def test_http_error_page_style_follows_explicit_banner_and_escapes_percent
     serve, sink, windows_persona
 ):
     host, port = await serve(http.Http(make_options(banner="Apache/2.4.62 (Debian) 100%")))
-    reader, writer = await asyncio.open_connection(host, port)
-    writer.write(b"GET / HTTP/1.1\r\nHost: x\r\nAuthorization: Basic %%%\r\n\r\n")
-    await writer.drain()
-    raw = await asyncio.wait_for(reader.read(), 5)
-    assert b" 400 " in raw.split(b"\r\n")[0]
-    assert b"Server: Apache/2.4.62 (Debian) 100%" in raw
-    assert b"HTTP Error" not in raw  # IIS wording must not appear under an Apache banner
-    assert b"<center>Apache/2.4.62 (Debian) 100%</center>" in raw
-    writer.close()
+    status, headers, body = await asyncio.to_thread(
+        _get, host, port, "/", {"Authorization": "Basic %%%"}
+    )
+    assert status == 400
+    assert headers["Server"] == "Apache/2.4.62 (Debian) 100%"
+    assert b"HTTP Error" not in body
+    assert b"<center>Apache/2.4.62 (Debian) 100%</center>" in body

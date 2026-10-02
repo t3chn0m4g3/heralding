@@ -7,7 +7,7 @@ honeypot!
 
 Supported protocols: ftp (with AUTH TLS), ftps, telnet, ssh, http, https, http_proxy, pop3, pop3s,
 imap, imaps, smtp, smtps, submission, vnc, postgresql, mysql, mssql, rdp, socks5, redis, mqtt,
-mqtts, ldap, ldaps and sip (UDP and TCP).
+mqtts, ldap, ldaps, sip (UDP and TCP) and smb (NTLMv1/v2).
 
 **Heralding 2.0 needs Python 3.14 or newer.** Dependencies are managed with
 [uv](https://docs.astral.sh/uv/).
@@ -116,7 +116,7 @@ timestamp,duration,session_id,source_ip,source_port,destination_ip,destination_p
 One line per authentication attempt, written as soon as the credentials arrive. The first ten
 columns are fixed; T-Pot's logstash and ewsposter read them by position. New columns are only ever
 appended. `password_hash` is set for protocols that never send the password in clear (for example
-MySQL, VNC, SMTP CRAM-MD5 and SIP) and uses formats that hashcat or John the Ripper understand.
+MySQL, VNC, SMTP CRAM-MD5, SIP and SMB) and uses formats that hashcat or John the Ripper understand.
 
 ```text
 timestamp,auth_id,session_id,source_ip,source_port,destination_ip,destination_port,protocol,username,password,password_hash
@@ -146,12 +146,14 @@ The image runs as uid 2000 with a read-only root filesystem. Logs go to `/var/lo
 ```shell
 uv sync
 uv run ruff check && uv run ruff format --check
-uv run pytest
+uv run pytest --cov
 ```
 
 Tests use standard clients for every protocol (stdlib clients, asyncssh, pymysql, psycopg,
-redis-py, paho-mqtt, ldap3, python-tds, pyVoIP, python-socks, vncdotool). RDP logins are checked
-manually with `xfreerdp`.
+redis-py, paho-mqtt, ldap3, python-tds, pyVoIP, python-socks, vncdotool, telnetlib3, smbprotocol). RDP logins are checked
+manually with `xfreerdp`. Feature coverage and container validation are recorded in
+[the completion audit](docs/superpowers/plans/2026-10-02-completion-audit.md).
+The reproducible container commands are in [tools/validation](tools/validation/README.md).
 
 ## Pcaps
 

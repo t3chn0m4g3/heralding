@@ -68,19 +68,13 @@ async def test_post_gets_401(serve, sink):
 
 async def test_too_many_headers_is_431(serve, sink):
     host, port = await serve(http_capability.Http(make_options(banner="")))
-    reader, writer = await asyncio.open_connection(host, port)
-    writer.write(b"GET / HTTP/1.1\r\n" + b"X-A: b\r\n" * 150 + b"\r\n")
-    await writer.drain()
-    status_line = await reader.readline()
-    assert status_line.split()[1] == b"431"
-    writer.close()
+    status, _, _ = await asyncio.to_thread(
+        _get, host, port, "/", {f"X-A-{i}": "b" for i in range(150)}
+    )
+    assert status == 431
 
 
 async def test_overlong_request_line_is_414(serve, sink):
     host, port = await serve(http_capability.Http(make_options(banner="")))
-    reader, writer = await asyncio.open_connection(host, port)
-    writer.write(b"GET /" + b"a" * 9000 + b" HTTP/1.1\r\n\r\n")
-    await writer.drain()
-    status_line = await reader.readline()
-    assert status_line.split()[1] == b"414"
-    writer.close()
+    status, _, _ = await asyncio.to_thread(_get, host, port, "/" + "a" * 9000)
+    assert status == 414

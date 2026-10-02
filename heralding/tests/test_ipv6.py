@@ -1,4 +1,5 @@
 import asyncio
+import poplib
 import socket
 
 import pytest
@@ -16,23 +17,25 @@ def test_normalize_ip():
 
 
 async def _pop3_attempt(host, port):
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    writer.write(b"USER u\r\nPASS p\r\n")
-    await writer.drain()
-    await reader.readline()
-    await reader.readline()
-    writer.close()
+    def run():
+        client = poplib.POP3(host, port, timeout=5)
+        try:
+            client.user("u")
+            with pytest.raises(poplib.error_proto):
+                client.pass_("p")
+        finally:
+            client.close()
+
+    await asyncio.to_thread(run)
 
 
 @pytest.mark.skipif(not socket.has_ipv6, reason="no IPv6 on this host")
 async def test_dual_stack_source_ip_without_mapped_prefix(sink):
     cap = pop3.Pop3(make_options(max_attempts=3, banner="+OK"))
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    server = await cap.create_server(["0.0.0.0", "::"], port)
-    assert {s.getsockname()[1] for s in server.sockets} == {port}  # same port on both families
+    # Bind IPv4 first and retain its socket while adding IPv6 on the same port.
+    server = await cap.create_server("0.0.0.0", 0)
+    port = server.sockets[0].getsockname()[1]
+    ipv6 = await cap.create_server("::", port)
     try:
         await _pop3_attempt("127.0.0.1", port)
         attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
@@ -43,8 +46,11 @@ async def test_dual_stack_source_ip_without_mapped_prefix(sink):
         assert attempt["source_ip"] == "::1"
     finally:
         server.close()
+        ipv6.close()
         server.close_clients()
+        ipv6.close_clients()
         await server.wait_closed()
+        await ipv6.wait_closed()
 
 
 async def test_bind_host_list_binds_all(sink):

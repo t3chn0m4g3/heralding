@@ -41,6 +41,7 @@ class Honeypot:
         self.config = config
         self._servers = []
         self._datagram_transports = []
+        self._capabilities = []
         self.public_ip_task = None
         self._fqdn_task = None
         self.persona = None
@@ -122,6 +123,7 @@ class Honeypot:
                 continue
             port = int(cap_cfg["port"])
             cap = cls(cap_cfg)
+            self._capabilities.append(cap)
             ssl_context = None
             if cls.TLS == "implicit" or (cls.NEEDS_CERT and cls.TLS != "starttls"):
                 psd = cap_cfg.get("protocol_specific_data") or {}
@@ -135,6 +137,15 @@ class Honeypot:
                         "tls_min_version", "TLSv1_2"
                     )
                     ssl_context = self.create_ssl_context(pem_file, min_version)
+                elif cap_name == "rdp":
+                    import warnings
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", DeprecationWarning)
+                        cap.tls_context = self.create_ssl_context(
+                            pem_file, cap.persona_value("tls_min_version", "TLSv1")
+                        )
+                    cap.tls_context.set_ciphers("DEFAULT:@SECLEVEL=0")
             if cls.TLS == "starttls" or getattr(cls, "OFFER_AUTH_TLS", False):
                 self._attach_starttls(cap, cap_name, cap_cfg)
             try:
@@ -150,13 +161,17 @@ class Honeypot:
                 raise
             logger.debug("Adding %s capability with options: %s", cap_name, cap_cfg)
             self._servers.append(server)
-            listen_ports.append(port)
-            logger.info("Started %s capability listening on port %s", cap_name, port)
+            # Port zero is useful for collision-free local clients and tests.
+            bound_ports = sorted({sock.getsockname()[1] for sock in server.sockets})
+            listen_ports.extend(bound_ports)
+            logger.info("Started %s capability listening on port %s", cap_name, bound_ports[0])
             if "udp" in cls.TRANSPORT:
                 hosts = bind_host if isinstance(bind_host, list) else [bind_host]
                 for host in hosts:
                     try:
-                        transport, _ = await cap.create_datagram_endpoint(host, port)
+                        transport, _ = await cap.create_datagram_endpoint(
+                            host, port or bound_ports[0]
+                        )
                     except OSError as exc:
                         logger.error(
                             "Could not start %s on udp port %s [%s] %s",
@@ -167,7 +182,11 @@ class Honeypot:
                         )
                         raise
                     self._datagram_transports.append(transport)
-                logger.info("Started %s capability listening on udp port %s", cap_name, port)
+                logger.info(
+                    "Started %s capability listening on udp port %s",
+                    cap_name,
+                    port or bound_ports[0],
+                )
         get_hub().emit_listen_ports(listen_ports)
 
     async def stop(self):
@@ -183,6 +202,9 @@ class Honeypot:
             except TimeoutError:
                 pass
 
+        for cap in self._capabilities:
+            if hasattr(cap, "close_datagram_sessions"):
+                cap.close_datagram_sessions()
         for transport in self._datagram_transports:
             transport.close()
         for server in self._servers:
@@ -234,6 +256,8 @@ class Honeypot:
     @staticmethod
     def create_ssl_context(pem_file, min_version="TLSv1_2"):
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ssl_context.minimum_version = getattr(ssl.TLSVersion, str(min_version))
+        from heralding.misc.tls import minimum_version
+
+        ssl_context.minimum_version = minimum_version(min_version)
         ssl_context.load_cert_chain(pem_file)
         return ssl_context

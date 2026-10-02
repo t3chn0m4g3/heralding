@@ -31,6 +31,7 @@ from aiosmtpd.smtp import MISSING, SMTP, syntax
 
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.misc.textutil import decode_lossless
+from heralding.misc.tls import upgrade_stream
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class SMTPHandler(SMTP):
             return
         await self.push("220 2.0.0 Ready to start TLS")
         # upgrade the existing stream in place; a failed handshake is a client error
-        await self._writer.start_tls(self._starttls_context, ssl_handshake_timeout=10)
+        await upgrade_stream(self._reader, self._writer, self._starttls_context)
         self._tls_active = True
         self._set_rset_state()
         self.session.host_name = None

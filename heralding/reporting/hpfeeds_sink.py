@@ -33,11 +33,13 @@ class HpfeedsSink(Sink):
 
     def _publish(self, channel, data) -> None:
         payload = json.dumps(data).encode()
+        if self._conn is None:
+            self._connect()
         try:
             self._conn.publish(channel, payload)
         except Exception:
             # one reconnect attempt; a second failure is caught by the worker
-            self._conn = None
+            self.close()
             self._connect()
             self._conn.publish(channel, payload)
 
@@ -48,5 +50,9 @@ class HpfeedsSink(Sink):
         self._publish(self.session_channel, data)
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
+        connection, self._conn = self._conn, None
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception as exc:
+                logger.debug("HpFeeds connection close failed: %s", exc)

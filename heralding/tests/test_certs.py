@@ -92,3 +92,19 @@ def test_marker_is_the_fqdn_not_the_persona_name(tmp_path):
     p = tmp_path / "https.pem"
     certs.ensure_cert(str(p), {"common_name": "*"}, persona_tag="web-07.internal")
     assert (tmp_path / "https.pem.persona").read_text() == "web-07.internal"
+
+
+def test_explicit_certificate_configuration_change_regenerates_certificate(tmp_path):
+    p = tmp_path / "https.pem"
+    certs.ensure_cert(str(p), {"common_name": "old.example"}, persona_tag="host.example")
+    original = p.read_bytes()
+    certs.ensure_cert(str(p), {"common_name": "new.example"}, persona_tag="host.example")
+    assert p.read_bytes() != original
+    certificate = x509.load_pem_x509_certificate(p.read_bytes())
+    assert (
+        certificate.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0].value
+        == "new.example"
+    )
+    current = p.read_bytes()
+    certs.ensure_cert(str(p), {"common_name": "new.example"}, persona_tag="host.example")
+    assert p.read_bytes() == current

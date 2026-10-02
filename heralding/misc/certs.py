@@ -1,6 +1,8 @@
 """Self-signed certificate generation (cryptography) for the TLS capabilities."""
 
 import datetime
+import hashlib
+import json
 import os
 import secrets
 
@@ -77,6 +79,17 @@ def ensure_cert(pem_path: str, cert_cfg: dict | None, persona_tag: str | None = 
     without a marker (pre-2.0 installation) is kept and the marker is added.
     """
     marker = pem_path + ".persona"
+    config_marker = pem_path + ".config"
+    config_hash = hashlib.sha256(json.dumps(cert_cfg or {}, sort_keys=True).encode()).hexdigest()
+    if os.path.isfile(pem_path) and os.path.isfile(config_marker):
+        with open(config_marker, encoding="utf-8") as fh:
+            if fh.read().strip() != config_hash:
+                os.remove(pem_path)
+                if os.path.isfile(marker):
+                    os.remove(marker)
+                os.remove(config_marker)
+    if os.path.isfile(pem_path) and not os.path.isfile(config_marker):
+        _write_marker(config_marker, config_hash)
     if os.path.isfile(pem_path):
         if persona_tag is None:
             return pem_path
@@ -105,6 +118,7 @@ def ensure_cert(pem_path: str, cert_cfg: dict | None, persona_tag: str | None = 
         fh.write(key)
     if persona_tag is not None:
         _write_marker(marker, persona_tag)
+    _write_marker(config_marker, config_hash)
     return pem_path
 
 

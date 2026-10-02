@@ -1,9 +1,8 @@
 """Minimal TDS (MS-TDS) helpers for the MSSQL capability: packet framing, PRELOGIN and
 LOGIN7 parsing, ERROR/DONE response building. Everything is length-bounded."""
 
+import asyncio
 import struct
-
-from heralding.misc.textutil import decode_lossless
 
 MAX_PACKET = 32 * 1024
 
@@ -31,11 +30,12 @@ class TdsError(ValueError):
 
 async def read_packet(reader):
     """Return (type, payload) of one TDS packet, or (None, None) on EOF before a header."""
-    header = await reader.read(8)
-    if not header:
-        return None, None
-    if len(header) < 8:
-        raise TdsError("short TDS header")
+    try:
+        header = await reader.readexactly(8)
+    except asyncio.IncompleteReadError as exc:
+        if not exc.partial:
+            return None, None
+        raise TdsError("short TDS header") from None
     packet_type, _status, length = header[0], header[1], struct.unpack(">H", header[2:4])[0]
     if length < 8 or length > MAX_PACKET:
         raise TdsError("bad TDS packet length")
@@ -143,11 +143,7 @@ def parse_login7(payload: bytes) -> dict:
         end = offset + length * 2
         if end > len(payload):
             raise TdsError("password out of range")
-        result["password"] = decode_lossless(
-            decode_password(payload[offset:end])
-            .decode("utf-16-le", "surrogatepass")
-            .encode("utf-8", "surrogateescape")
-        )
+        result["password"] = decode_password(payload[offset:end]).decode("utf-16-le", "replace")
     else:
         result["password"] = ""
     return result

@@ -29,6 +29,7 @@ MAX_MESSAGE = 8192
 _REQUEST_LINE = re.compile(r"^([A-Z]+) (\S+) SIP/2\.0$")
 _PARAM = re.compile(r'(\w+)=("([^"]*)"|([^,\s]*))')
 COPIED_HEADERS = ("via", "from", "to", "call-id", "cseq")
+HEADER_LABELS = {"via": "Via", "from": "From", "to": "To", "call-id": "Call-ID", "cseq": "CSeq"}
 
 
 def parse_message(data: bytes):
@@ -60,6 +61,9 @@ class Sip(DatagramHandlerBase):
     NAME = "sip"
     TRANSPORT = "tcp+udp"
 
+    def valid_datagram(self, data):
+        return len(data) <= MAX_MESSAGE and parse_message(data) is not None
+
     def _realm(self):
         persona = type(self).persona
         return persona.domain if persona is not None and persona.domain else "sip.local"
@@ -68,7 +72,7 @@ class Sip(DatagramHandlerBase):
         lines = [f"SIP/2.0 {code} {reason}"]
         for name in COPIED_HEADERS:
             if name in headers:
-                label = "CSeq" if name == "cseq" else name.title()
+                label = HEADER_LABELS[name]
                 lines.append(f"{label}: {headers[name]}")
         lines.extend(extra)
         lines.append("User-Agent: " + self.persona_value("user_agent", "Asterisk PBX"))
@@ -101,12 +105,13 @@ class Sip(DatagramHandlerBase):
 
     @staticmethod
     def _log_attempt(session, method, uri, creds):
-        # hashcat 11400 layout: $sip$*server*client*user*realm*method*proto*prefix*resource*suffix*nonce*cnonce*nc*qop*directive*response
+        # hashcat 11400: tag, server, client, user, realm, method,
+        # URI prefix/resource/suffix, nonce, cnonce, nc, qop, directive, response.
         # the digest is computed over the uri directive of the credentials, not the Request-URI
         scheme, _, rest = (creds.get("uri") or uri).partition(":")
         fields = [
             "$sip$", "", "", creds.get("username", ""), creds.get("realm", ""), method,
-            scheme or "sip", "", rest, "", creds.get("nonce", ""), creds.get("cnonce", ""),
+            scheme or "sip", rest, "", creds.get("nonce", ""), creds.get("cnonce", ""),
             creds.get("nc", ""), creds.get("qop", ""), "MD5", creds.get("response", ""),
         ]  # fmt: skip
         session.set_auxiliary_data(
@@ -117,10 +122,22 @@ class Sip(DatagramHandlerBase):
         )
 
     async def execute_capability(self, reader, writer, session):
-        """TCP transport: one request per connection, same reply logic."""
-        data = await reader.read(MAX_MESSAGE)
-        reply = self.handle_datagram(data, session, transport="TCP")
-        if reply:
-            writer.write(reply)
-            await writer.drain()
+        """Keep the TCP stream open for the client's challenge response."""
+        for _ in range(
+            int((self.options.get("protocol_specific_data") or {}).get("max_attempts", 10))
+        ):
+            data = await reader.readuntil(b"\r\n\r\n")
+            if len(data) > MAX_MESSAGE:
+                raise ValueError("SIP message too large")
+            parsed = parse_message(data)
+            if parsed is None:
+                break
+            body_length = int(parsed[2].get("content-length", "0"))
+            if not 0 <= body_length <= MAX_MESSAGE - len(data):
+                raise ValueError("SIP body too large")
+            await reader.readexactly(body_length)
+            reply = self.handle_datagram(data, session, transport="TCP")
+            if reply:
+                writer.write(reply)
+                await writer.drain()
         session.end_session()

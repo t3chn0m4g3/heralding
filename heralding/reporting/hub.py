@@ -102,8 +102,18 @@ class ReportingHub:
     def start(self) -> None:
         """Open every sink on the calling thread (so a broken log path fails startup), then
         start the worker threads."""
-        for w in self._workers:
-            w.sink.open()
+        opened = []
+        try:
+            for w in self._workers:
+                opened.append(w.sink)
+                w.sink.open()
+        except Exception:
+            for sink in reversed(opened):
+                try:
+                    sink.close()
+                except Exception as exc:
+                    logger.debug("Sink cleanup after startup failure: %s", exc)
+            raise
         for w in self._workers:
             w.start()
         self._started = True

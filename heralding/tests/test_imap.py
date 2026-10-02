@@ -61,55 +61,67 @@ async def test_authenticate_plain(serve, sink):
 
 async def test_imap_allows_exactly_max_attempts(serve, sink):
     host, port = await serve(Imap(make_options(max_attempts=2, banner="* OK")))
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    for i in range(2):
-        writer.write(f"a{i} LOGIN u p\r\n".encode())
-        await writer.drain()
-        assert b"NO Authentication failed" in await reader.readline()
-    assert await asyncio.wait_for(reader.read(), 5) == b""
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        try:
+            for _ in range(2):
+                with pytest.raises(imaplib.IMAP4.error, match="Authentication failed"):
+                    client.login("u", "p")
+            with pytest.raises(imaplib.IMAP4.abort):
+                client.noop()
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
     assert len(await asyncio.to_thread(sink.wait_for_auth, 2)) == 2
-    writer.close()
 
 
 async def test_imap_login_latin1_is_logged(serve, sink):
     host, port = await serve(Imap(make_options(max_attempts=3, banner="* OK")))
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    writer.write(b"a1 LOGIN u p\xe4\r\n")
-    await writer.drain()
-    assert b"NO Authentication failed" in await reader.readline()
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        client._encoding = "latin1"
+        try:
+            with pytest.raises(imaplib.IMAP4.error):
+                client.login("u", "pä")
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert attempt["password"] == "p\\xe4"
-    writer.close()
 
 
 async def test_imap_authenticate_plain_sasl_ir(serve, sink):
     host, port = await serve(Imap(make_options(max_attempts=3, banner="* OK")))
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    blob = base64.b64encode(b"\x00u\x00p ").decode()
-    writer.write(f"a1 AUTHENTICATE PLAIN {blob}\r\n".encode())
-    await writer.drain()
-    assert b"a1 NO Authentication failed" in await reader.readline()
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        try:
+            typ, _ = client._simple_command("AUTHENTICATE", "PLAIN", base64.b64encode(b"\0u\0p "))
+            assert typ == "NO"
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
-    assert attempt["password"] == "p "  # trailing space kept
-    writer.close()
+    assert attempt["password"] == "p "
 
 
 async def test_imap_login_with_literals(serve, sink):
     host, port = await serve(Imap(make_options(max_attempts=3, banner="* OK")))
-    reader, writer = await asyncio.open_connection(host, port)
-    await reader.readline()
-    writer.write(b"a1 LOGIN {1}\r\n")
-    await writer.drain()
-    assert (await reader.readline()).startswith(b"+")
-    writer.write(b"u {2}\r\n")
-    await writer.drain()
-    assert (await reader.readline()).startswith(b"+")
-    writer.write(b'p"\r\n')
-    await writer.drain()
-    assert b"a1 NO Authentication failed" in await reader.readline()
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        try:
+            client.literal = b'p"'
+            typ, _ = client._simple_command("LOGIN", "u")
+            assert typ == "NO"
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert (attempt["username"], attempt["password"]) == ("u", 'p"')
-    writer.close()

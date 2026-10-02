@@ -46,7 +46,16 @@ async def test_anonymous_rootdse_search_shows_persona(serve, sink, windows_perso
             "",
             "(objectClass=*)",
             search_scope=ldap3.BASE,
-            attributes=["vendorName", "vendorVersion", "namingContexts", "supportedLDAPVersion"],
+            attributes=[
+                "vendorName",
+                "vendorVersion",
+                "namingContexts",
+                "supportedLDAPVersion",
+                "objectClass",
+                "supportedCapabilities",
+                "dnsHostName",
+                "configurationNamingContext",
+            ],
         )
         return conn.entries[0].entry_attributes_as_dict if conn.entries else {}
 
@@ -54,6 +63,10 @@ async def test_anonymous_rootdse_search_shows_persona(serve, sink, windows_perso
     assert attrs["vendorName"] == [windows_persona.get("ldap", "vendor_name")]
     assert attrs["namingContexts"] == [windows_persona.get("ldap", "naming_context")]
     assert "3" in attrs["supportedLDAPVersion"]
+    assert attrs["objectClass"] == ["top"]
+    assert "1.2.840.113556.1.4.800" in attrs["supportedCapabilities"]
+    assert attrs["dnsHostName"] == [windows_persona.fqdn]
+    assert attrs["configurationNamingContext"] == ["CN=Configuration," + attrs["namingContexts"][0]]
 
 
 async def test_ldaps_bind_over_tls(serve, sink, server_ssl_context):

@@ -20,7 +20,7 @@ develop-eggs
 pip-log.txt
 
 # Unit test / coverage reports
-.coverage
+.coverage*
 .tox
 
 #Translations
@@ -59,6 +59,10 @@ venv/*
 .pytest_cache/
 __pycache__/
 .superpowers/
+
+/*.pem.config
+.coverage*
+htmlcov/
 
 # Local planning and validation documents
 /docs/
