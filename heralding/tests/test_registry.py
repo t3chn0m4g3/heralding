@@ -21,6 +21,7 @@ EXPECTED = {
     "redis": None,
     "mqtt": None,
     "mqtts": "implicit",
+    "http_proxy": None,
 }
 
 

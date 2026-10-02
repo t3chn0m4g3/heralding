@@ -221,6 +221,14 @@ capabilities:
     port: 6379
     timeout: 30
 
+  http_proxy:
+    enabled: true
+    port: 8080
+    timeout: 30
+    protocol_specific_data:
+      # Server header of the proxy; empty = from persona
+      banner: ""
+
   mqtt:
     enabled: true
     port: 1883

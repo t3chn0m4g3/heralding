@@ -3,6 +3,7 @@
 from heralding.capabilities import (  # noqa: F401
     ftp,
     http,
+    http_proxy,
     https,
     imap,
     imaps,
