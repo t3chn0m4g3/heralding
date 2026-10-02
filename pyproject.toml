@@ -42,6 +42,7 @@ dev = [
     "audioop-lts>=0.2",  # audioop was removed in 3.13; pyVoIP imports it
     "telnetlib3>=5.0.1",
     "pytest-cov>=7.1.0",
+    "hpfeeds3>=0.9.10",  # exercise the actual optional client's retry behavior
 ]
 
 [build-system]

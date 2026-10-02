@@ -349,6 +349,7 @@ hpfeeds = [
 [package.dev-dependencies]
 dev = [
     { name = "audioop-lts" },
+    { name = "hpfeeds3" },
     { name = "ldap3" },
     { name = "paho-mqtt" },
     { name = "psycopg", extra = ["binary"] },
@@ -381,6 +382,7 @@ provides-extras = ["hpfeeds", "curiosum"]
 [package.metadata.requires-dev]
 dev = [
     { name = "audioop-lts", specifier = ">=0.2" },
+    { name = "hpfeeds3", specifier = ">=0.9.10" },
     { name = "ldap3", specifier = ">=2.9" },
     { name = "paho-mqtt", specifier = ">=2.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3" },

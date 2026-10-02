@@ -1,9 +1,32 @@
 import json
 import logging
+import socket
 
 from heralding.reporting.hub import Sink
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_client(client_type, host, port, ident, secret):
+    # hpfeeds3's constructor calls tryconnect(), whose retry loop ignores
+    # reconnect=False. Keep its authentication/framing but bound socket I/O.
+    class BoundedClient(client_type):
+        def tryconnect(self):
+            with self.connecting_lock:
+                if self.connected:
+                    return
+                self.close_old()
+                try:
+                    self.s = socket.create_connection((self.host, self.port), self.timeout)
+                    self.unpacker.reset()
+                    self.do_auth()
+                    self.connected = True
+                except Exception:
+                    self.close_old()
+                    self.s = None
+                    raise
+
+    return BoundedClient(host, port, ident, secret, timeout=3, reconnect=False)
 
 
 class HpfeedsSink(Sink):
@@ -17,18 +40,20 @@ class HpfeedsSink(Sink):
         self.ident = ident
         self.secret = secret
         self._conn = None
-        self._hpfeeds = None
+        self._client_type = None
 
     def open(self) -> None:
         try:
-            import hpfeeds
+            from hpfeeds.client import Client
         except ImportError as exc:
             raise RuntimeError("hpfeeds logging requires 'uv sync --extra hpfeeds'") from exc
-        self._hpfeeds = hpfeeds
+        self._client_type = Client
         self._connect()
 
     def _connect(self) -> None:
-        self._conn = self._hpfeeds.new(self.host, self.port, self.ident, self.secret, True)
+        self._conn = _bounded_client(
+            self._client_type, self.host, self.port, self.ident, self.secret
+        )
         logger.info("HpFeeds logger connected to %s:%s.", self.host, self.port)
 
     def _publish(self, channel, data) -> None:

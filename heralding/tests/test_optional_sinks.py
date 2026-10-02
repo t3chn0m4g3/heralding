@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
@@ -10,6 +11,74 @@ from heralding.reporting.curiosum_sink import CuriosumSink
 from heralding.reporting.hpfeeds_sink import HpfeedsSink
 from heralding.reporting.hub import build_hub
 from heralding.reporting.syslog_sink import SyslogSink
+
+
+@pytest.mark.parametrize("failure", [ConnectionRefusedError("offline"), TimeoutError("slow")])
+def test_hpfeeds_real_client_connection_failure_is_not_retried(monkeypatch, failure):
+    connect = Mock(side_effect=failure)
+    monkeypatch.setattr("heralding.reporting.hpfeeds_sink.socket.create_connection", connect)
+    sink = HpfeedsSink("sessions", "auth", "localhost", 10000, "id", "secret")
+    with pytest.raises(type(failure)):
+        sink.open()
+    connect.assert_called_once_with(("localhost", 10000), 3)
+    assert sink._conn is None
+
+
+def test_hpfeeds_real_client_auth_timeout_closes_socket(monkeypatch):
+    sock = Mock()
+    sock.recv.side_effect = TimeoutError("slow broker")
+    monkeypatch.setattr(
+        "heralding.reporting.hpfeeds_sink.socket.create_connection", Mock(return_value=sock)
+    )
+    from hpfeeds import FeedException
+
+    sink = HpfeedsSink("sessions", "auth", "localhost", 10000, "id", "secret")
+    with pytest.raises(FeedException, match="receive timeout"):
+        sink.open()
+    sock.close.assert_called_once()
+    assert sink._conn is None
+
+
+async def test_hpfeeds_real_client_auth_and_publish():
+    from hpfeeds.protocol import OP_AUTH, OP_PUBLISH, Unpacker, msginfo, readpublish
+
+    received = asyncio.Queue()
+
+    async def broker(reader, writer):
+        try:
+            writer.write(msginfo("test-broker", b"challenge"))
+            await writer.drain()
+            unpacker = Unpacker()
+            while data := await reader.read(4096):
+                unpacker.feed(data)
+                for message in unpacker:
+                    await received.put(message)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(broker, "127.0.0.1", 0)
+    sink = HpfeedsSink(
+        "sessions", "auth", "127.0.0.1", server.sockets[0].getsockname()[1], "id", "secret"
+    )
+    try:
+        await asyncio.to_thread(sink.open)
+        assert sink._conn.reconnect is False
+        assert sink._conn.s.gettimeout() == 3
+        await asyncio.to_thread(sink.handle_auth, {"username": "ä"})
+        await asyncio.to_thread(sink.handle_session, {"session_id": "s"})
+        opcode, _ = await asyncio.wait_for(received.get(), 3)
+        assert opcode == OP_AUTH
+        for channel, expected in [("auth", {"username": "ä"}), ("sessions", {"session_id": "s"})]:
+            opcode, payload = await asyncio.wait_for(received.get(), 3)
+            assert opcode == OP_PUBLISH
+            ident, actual_channel, data = readpublish(payload)
+            assert ident == "id" and actual_channel == channel
+            assert json.loads(data) == expected
+    finally:
+        sink.close()
+        server.close()
+        await server.wait_closed()
 
 
 def test_syslog_sanitizes_credentials(monkeypatch):
@@ -33,7 +102,7 @@ def test_hpfeeds_reconnect_closes_failed_connection(monkeypatch):
     first, second = Mock(), Mock()
     first.publish.side_effect = OSError("disconnected")
     factory = Mock(side_effect=[first, second])
-    monkeypatch.setitem(sys.modules, "hpfeeds", SimpleNamespace(new=factory))
+    monkeypatch.setattr("heralding.reporting.hpfeeds_sink._bounded_client", factory)
     sink = HpfeedsSink("sessions", "auth", "localhost", 10000, "id", "secret")
     sink.open()
     sink.handle_auth({"username": "ä"})
@@ -51,10 +120,9 @@ def test_hpfeeds_reconnect_closes_failed_connection(monkeypatch):
 def test_hpfeeds_recovers_after_reconnect_failure(monkeypatch):
     first, recovered = Mock(), Mock()
     first.publish.side_effect = OSError("disconnected")
-    monkeypatch.setitem(
-        sys.modules,
-        "hpfeeds",
-        SimpleNamespace(new=Mock(side_effect=[first, OSError("offline"), recovered])),
+    monkeypatch.setattr(
+        "heralding.reporting.hpfeeds_sink._bounded_client",
+        Mock(side_effect=[first, OSError("offline"), recovered]),
     )
     sink = HpfeedsSink("sessions", "auth", "localhost", 10000, "id", "secret")
     sink.open()
@@ -106,7 +174,7 @@ def test_curiosum_contract_periodic_ports_and_close(monkeypatch):
     "module,sink", [("hpfeeds", HpfeedsSink("s", "a", "h", 1, "i", "p")), ("zmq", CuriosumSink(1))]
 )
 def test_missing_optional_dependencies_explain_installation(monkeypatch, module, sink):
-    monkeypatch.setitem(sys.modules, module, None)
+    monkeypatch.setitem(sys.modules, "hpfeeds.client" if module == "hpfeeds" else module, None)
     with pytest.raises(RuntimeError, match="uv sync --extra"):
         sink.open()
 
