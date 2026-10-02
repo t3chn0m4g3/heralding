@@ -9,7 +9,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /opt/heralding
 # dependencies first (cached layer), then the project itself
-COPY pyproject.toml uv.lock README.rst ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY heralding ./heralding
 RUN uv sync --locked --no-dev

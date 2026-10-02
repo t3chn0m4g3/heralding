@@ -6,7 +6,8 @@ public_ip_as_destination_ip: false
 bind_host: 0.0.0.0
 
 # system profile the honeypot presents (banners, versions, host names, certificate subjects).
-# "random" picks one of the profiles in heralding/personas.yml at every start; or name one, e.g.
+# "random" picks one of the profiles in heralding/personas.yml once and keeps it in persona.state
+# (working directory) across restarts; or name one, e.g.
 # ubuntu-24.04, debian-12, rhel-9, windows-server-2019, windows-server-2022.
 # Any banner set explicitly below overrides the persona for that capability.
 persona: random
