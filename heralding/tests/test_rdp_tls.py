@@ -8,7 +8,8 @@ from heralding.libs.msrdp.tls import TLS, TLSHandshakeError
 
 
 @pytest.mark.parametrize(
-    "version", [ssl.TLSVersion.TLSv1, ssl.TLSVersion.TLSv1_2, ssl.TLSVersion.TLSv1_3]
+    "version",
+    [ssl.TLSVersion.TLSv1, ssl.TLSVersion.TLSv1_1, ssl.TLSVersion.TLSv1_2, ssl.TLSVersion.TLSv1_3],
 )
 async def test_memorybio_tls_with_standard_ssl_client(server_ssl_context, version):
     with warnings.catch_warnings():
@@ -50,7 +51,7 @@ async def test_memorybio_tls_with_standard_ssl_client(server_ssl_context, versio
         assert await asyncio.wait_for(reader.readexactly(5), 5) == b"world"
         writer.close()
         await writer.wait_closed()
-        assert await asyncio.wait_for(completed, 5) in ("TLSv1", "TLSv1.2", "TLSv1.3")
+        assert await asyncio.wait_for(completed, 5) in ("TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3")
     finally:
         server.close()
         await server.wait_closed()
