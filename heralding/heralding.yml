@@ -216,6 +216,11 @@ capabilities:
       version: ""
     
 
+  redis:
+    enabled: true
+    port: 6379
+    timeout: 30
+
   rdp:
     enabled: true
     port: 3389

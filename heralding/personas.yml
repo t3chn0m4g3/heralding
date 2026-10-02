@@ -23,6 +23,7 @@ ubuntu-24.04:
     http: { banner: "nginx/1.24.0 (Ubuntu)" }
     ssh: { banner: "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.5" }
     mysql: { version: "8.0.37-0ubuntu0.24.04.1" }
+    redis: { version: "7.0.15" }
     vnc: {}
     rdp: {}
 
@@ -48,6 +49,7 @@ debian-12:
     http: { banner: "Apache/2.4.62 (Debian)" }
     ssh: { banner: "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3" }
     mysql: { version: "10.11.6-MariaDB-0+deb12u1" }
+    redis: { version: "7.0.15" }
     vnc: {}
     rdp: {}
 
@@ -73,6 +75,7 @@ rhel-9:
     http: { banner: "Apache/2.4.57 (Red Hat Enterprise Linux)" }
     ssh: { banner: "SSH-2.0-OpenSSH_8.7" }
     mysql: { version: "8.0.36" }
+    redis: { version: "7.2.4" }
     vnc: {}
     rdp: {}
 
@@ -98,6 +101,7 @@ windows-server-2019:
     http: { banner: "Microsoft-IIS/10.0" }
     ssh: { banner: "SSH-2.0-OpenSSH_for_Windows_8.1" }
     mysql: { version: "8.0.31" }
+    redis: { version: "5.0.14.1" }
     vnc: {}
     rdp: {}
 
@@ -123,5 +127,6 @@ windows-server-2022:
     http: { banner: "Microsoft-IIS/10.0" }
     ssh: { banner: "SSH-2.0-OpenSSH_for_Windows_9.5" }
     mysql: { version: "8.0.36" }
+    redis: { version: "5.0.14.1" }
     vnc: {}
     rdp: {}
