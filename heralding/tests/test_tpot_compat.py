@@ -144,6 +144,6 @@ async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch):
     finally:
         await honeypot.stop()
         HandlerBase.set_persona(None)
-        smtp.set_fqdn("", source="config")
+        smtp.set_fqdn("", source="persona")
         hub.stop()
         set_hub(None)

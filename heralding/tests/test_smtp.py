@@ -145,10 +145,11 @@ async def test_ehlo_advertises_size_limit(serve, sink):
     assert "auth" in features
 
 
-def test_explicit_fqdn_is_not_overwritten_by_lookup():
-    smtp.set_fqdn("", source="lookup")
-    smtp.smtp(make_options(banner="b", fqdn="fixed.example"))
+def test_explicit_fqdn_is_not_overwritten_by_lookup_or_persona():
+    cap = smtp.smtp(make_options(banner="b", fqdn="fixed.example"))
     smtp.set_fqdn("looked-up.example", source="lookup")
-    assert smtp.SMTPHandler.fqdn == "fixed.example"
-    smtp.set_fqdn("", source="config")  # reset pin for other tests
-    smtp.set_fqdn("", source="lookup")
+    smtp.set_fqdn("persona.example", source="persona")
+    assert cap.explicit_fqdn == "fixed.example"  # per instance, beats both fallbacks
+    assert smtp.SMTPHandler.fqdn == "persona.example"  # persona beats lookup
+    smtp.set_fqdn("", source="persona")
+    assert smtp.SMTPHandler.fqdn == ""

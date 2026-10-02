@@ -47,6 +47,9 @@ class HandlerBase:
     TRANSPORT: str = "tcp"  # "tcp" | "udp"
     NEEDS_CERT: bool = False  # capability handles TLS itself but needs <NAME>.pem in CWD
     persona = None  # set by Honeypot.start(); see misc/persona.py
+    PERSONA_NAME: str | None = (
+        None  # persona entry to use when it differs from NAME (e.g. ftps -> ftp)
+    )
     _registry: dict[str, type[HandlerBase]] = {}
 
     max_sessions = 800
@@ -75,7 +78,7 @@ class HandlerBase:
         if explicit not in (None, ""):
             return explicit
         if HandlerBase.persona is not None:
-            value = HandlerBase.persona.get(self.NAME, key)
+            value = HandlerBase.persona.get(self.PERSONA_NAME or self.NAME, key)
             if value is not None:
                 return value
         return default

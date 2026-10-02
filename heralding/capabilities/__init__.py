@@ -19,6 +19,7 @@ from heralding.capabilities import (  # noqa: F401
     smtps,
     socks5,
     ssh,
+    submission,
     telnet,
     vnc,
 )

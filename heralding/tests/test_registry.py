@@ -22,6 +22,7 @@ EXPECTED = {
     "mqtt": None,
     "mqtts": "implicit",
     "http_proxy": None,
+    "submission": "starttls",
 }
 
 

@@ -39,22 +39,20 @@ AUTH_FAILED = "535 5.7.8 Authentication credentials invalid"
 BAD_ENCODING = "501 5.5.2 Cannot decode response"
 
 
-def set_fqdn(value: str, source: str = "config") -> None:
-    """Set the host name used in CRAM-MD5 challenges.
+def set_fqdn(value: str, source: str = "persona") -> None:
+    """Set the process-wide fallback host name used in CRAM-MD5 challenges.
 
-    A value from the config pins the name; later periodic lookups (source="lookup") do not
-    overwrite it. An empty config value releases the pin.
+    The persona value wins over the periodic DNS lookup; an explicit `fqdn` in a capability's
+    config is handled per instance (see `smtp.__init__`) and beats both.
     """
-    if source == "config":
-        SMTPHandler._fqdn_pinned = bool(value)
-        SMTPHandler._fqdn_from_persona = False
+    if source == "persona":
+        SMTPHandler._fqdn_from_persona = bool(value)
         SMTPHandler.fqdn = value or ""
-    elif source == "persona":
-        if not SMTPHandler._fqdn_pinned:
-            SMTPHandler._fqdn_from_persona = bool(value)
+    elif source == "lookup":
+        if not SMTPHandler._fqdn_from_persona:
             SMTPHandler.fqdn = value or ""
-    elif not SMTPHandler._fqdn_pinned and not SMTPHandler._fqdn_from_persona:
-        SMTPHandler.fqdn = value or ""
+    else:
+        raise ValueError(f"unknown fqdn source {source!r}")
 
 
 def _b64decode(blob) -> bytes:
@@ -64,13 +62,25 @@ def _b64decode(blob) -> bytes:
 
 
 class SMTPHandler(SMTP):
-    fqdn = ""
-    _fqdn_pinned = False
+    fqdn = ""  # process-wide fallback (persona or lookup); see set_fqdn()
     _fqdn_from_persona = False
 
-    def __init__(self, reader, writer, session, options, banner="ESMTP", ehlo_hostname=None):
+    def __init__(
+        self,
+        reader,
+        writer,
+        session,
+        options,
+        banner="ESMTP",
+        ehlo_hostname=None,
+        tls_context=None,
+        fqdn=None,
+    ):
         self.banner = banner
         self.ehlo_hostname = ehlo_hostname or banner
+        self.fqdn_value = fqdn or SMTPHandler.fqdn
+        self._starttls_context = tls_context
+        self._tls_active = False
         super().__init__(None, hostname=self.banner, data_size_limit=DATA_SIZE_LIMIT)
         # Reset standard banner.
         self.__ident__ = ""
@@ -104,7 +114,25 @@ class SMTPHandler(SMTP):
         await self.push(f"250-{self.ehlo_hostname} Hello {hostname}")
         await self.push(f"250-SIZE {DATA_SIZE_LIMIT}")
         await self.push("250-8BITMIME")
+        if self._starttls_context is not None and not self._tls_active:
+            await self.push("250-STARTTLS")
         await self.push("250 AUTH PLAIN LOGIN CRAM-MD5")
+
+    @syntax("STARTTLS")
+    async def smtp_STARTTLS(self, arg):
+        if arg:
+            await self.push("501 Syntax: STARTTLS")
+            return
+        if self._starttls_context is None or self._tls_active:
+            await self.push("454 4.7.0 TLS not available due to temporary reason")
+            return
+        await self.push("220 2.0.0 Ready to start TLS")
+        # upgrade the existing stream in place; a failed handshake is a client error
+        await self._writer.start_tls(self._starttls_context, ssl_handshake_timeout=10)
+        self._tls_active = True
+        self._set_rset_state()
+        self.session.host_name = None
+        self.session.set_auxiliary_data({"starttls": True})
 
     async def _read_auth_line(self):
         line = await self.readline()
@@ -174,7 +202,7 @@ class SMTPHandler(SMTP):
 
     async def _auth_cram_md5(self):
         # challenge is of the form '<24609.1047914046@awesome.host.com>'
-        challenge = f"<{secrets.randbelow(15000) + 5000}.{int(time.time())}@{SMTPHandler.fqdn}>"
+        challenge = f"<{secrets.randbelow(15000) + 5000}.{int(time.time())}@{self.fqdn_value}>"
         challenge_bytes = challenge.encode("utf-8")
         await self.push("334 " + base64.b64encode(challenge_bytes).decode())
 
@@ -222,9 +250,7 @@ class smtp(HandlerBase):
     def __init__(self, options):
         super().__init__(options)
         self._options = options
-        explicit_fqdn = options.get("protocol_specific_data", {}).get("fqdn")
-        if explicit_fqdn:
-            set_fqdn(explicit_fqdn)
+        self.explicit_fqdn = (options.get("protocol_specific_data") or {}).get("fqdn") or None
 
     async def execute_capability(self, reader, writer, session):
         persona = HandlerBase.persona
@@ -235,5 +261,6 @@ class smtp(HandlerBase):
             self._options,
             banner=self.persona_value("banner", "ESMTP"),
             ehlo_hostname=persona.fqdn if persona is not None else None,
+            fqdn=self.explicit_fqdn,
         )
         await smtp_cap._handle_client()

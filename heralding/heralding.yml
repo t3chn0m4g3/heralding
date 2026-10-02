@@ -197,6 +197,23 @@ capabilities:
         valid_days: 365
         serial_number: 0
 
+  submission:
+    enabled: true
+    port: 587
+    timeout: 30
+    protocol_specific_data:
+      banner: ""
+      fqdn: ""
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
+        valid_days: 365
+        serial_number: 0
+
   vnc:
     enabled: true
     port: 5900
