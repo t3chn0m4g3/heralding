@@ -25,6 +25,8 @@ PSD = {
     "imap": dict(max_attempts=3, banner="* OK"),
     "http": dict(banner=""),
     "smtp": dict(banner="b", fqdn="h"),
+    "submission": dict(banner="b", fqdn="h"),
+    "http_proxy": dict(banner=""),
     "rdp": dict(
         banner="",
         cert={
@@ -51,6 +53,14 @@ PLAIN_TCP = [
     "mysql",
     "postgresql",
     "rdp",
+    # milestone C
+    "redis",
+    "mqtt",
+    "http_proxy",
+    "submission",
+    "ldap",
+    "mssql",
+    "sip",
 ]
 
 

@@ -19,6 +19,7 @@ from heralding.capabilities import (  # noqa: F401
     postgresql,
     rdp,
     redis,
+    sip,
     smtp,
     smtps,
     socks5,

@@ -256,6 +256,11 @@ capabilities:
     port: 6379
     timeout: 30
 
+  sip:
+    enabled: true
+    port: 5060    # UDP and TCP
+    timeout: 30
+
   mssql:
     enabled: true
     port: 1433

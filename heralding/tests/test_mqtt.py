@@ -73,16 +73,9 @@ async def test_mqtts_over_tls(serve, sink, server_ssl_context):
 
 async def test_non_utf8_password_is_logged(serve, sink):
     host, port = await serve(mqtt.Mqtt(make_options()))
-    reader, writer = await asyncio.open_connection(host, port)
-    # CONNECT, MQTT 3.1.1, flags: username+password, keepalive 60, client id "x", user "u", pass b"p\xe4"
-    payload = b"\x00\x01x" + b"\x00\x01u" + b"\x00\x02p\xe4"
-    var_header = b"\x00\x04MQTT\x04\xc2\x00\x3c"
-    body = var_header + payload
-    writer.write(b"\x10" + bytes([len(body)]) + body)
-    await writer.drain()
-    connack = await asyncio.wait_for(reader.readexactly(4), 5)
-    assert connack == b"\x20\x02\x00\x04"
-    writer.close()
+    # paho accepts a bytes password, so the client itself sends the raw Latin-1 byte
+    rc = await asyncio.to_thread(_connect, host, port, "u", b"p\xe4", paho.MQTTv311)
+    assert rc == BAD_CREDENTIALS
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert attempt["password"] == "p\\xe4"
 

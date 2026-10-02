@@ -99,16 +99,15 @@ async def test_sasl_bind_mechanism_is_recorded(serve, sink):
 
 
 async def test_non_utf8_password_in_simple_bind(serve, sink):
+    # Robustness input: ldap3 (pyasn1) refuses to encode a non-UTF-8 password on the client
+    # side, so no standard client can send it. Raw BER is used here on purpose.
     host, port = await serve(ldap.Ldap(make_options()))
     reader, writer = await asyncio.open_connection(host, port)
-    # BindRequest: messageID 1, version 3, name "u", simple password b"p\xe4"
-    bind = b"\x60\x0a\x02\x01\x03\x04\x01u\x80\x02p\xe4"
-    msg = b"\x30" + bytes([len(bind) + 3]) + b"\x02\x01\x01" + bind
-    writer.write(msg)
+    bind = b"\x60\x0a\x02\x01\x03\x04\x01u\x80\x02p\xe4"  # version 3, name "u", simple pw
+    writer.write(b"\x30" + bytes([len(bind) + 3]) + b"\x02\x01\x01" + bind)
     await writer.drain()
     resp = await asyncio.wait_for(reader.read(64), 5)
-    assert resp[:1] == b"\x30"
-    assert b"\x0a\x01\x31" in resp  # resultCode 49
+    assert resp[:1] == b"\x30" and b"\x0a\x01\x31" in resp  # BindResponse, resultCode 49
     writer.close()
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert (attempt["username"], attempt["password"]) == ("u", "p\\xe4")

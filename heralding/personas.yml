@@ -27,6 +27,7 @@ ubuntu-24.04:
     redis: { version: "7.0.15" }
     ldap: { vendor_name: "OpenLDAP", vendor_version: "2.6.7", naming_context: "dc=internal" }
     mssql: { version: "15.0.4236.7", product: "Microsoft SQL Server 2019 (RTM-CU22) - 15.0.4236.7 (X64) on Linux (Ubuntu 24.04)" }
+    sip: { user_agent: "Asterisk PBX 20.8.1" }
     vnc: {}
     rdp: {}
 
@@ -56,6 +57,7 @@ debian-12:
     redis: { version: "7.0.15" }
     ldap: { vendor_name: "OpenLDAP", vendor_version: "2.5.13", naming_context: "dc=lan" }
     mssql: { version: "16.0.4125.3", product: "Microsoft SQL Server 2022 (RTM-CU13) - 16.0.4125.3 (X64) on Linux (Debian 12)" }
+    sip: { user_agent: "Asterisk PBX 18.20.1~dfsg+~cs6.13.40431414-1" }
     vnc: {}
     rdp: {}
 
@@ -85,6 +87,7 @@ rhel-9:
     redis: { version: "7.2.4" }
     ldap: { vendor_name: "389 Project", vendor_version: "389-Directory/2.4.5", naming_context: "dc=corp,dc=local" }
     mssql: { version: "16.0.4125.3", product: "Microsoft SQL Server 2022 (RTM-CU13) - 16.0.4125.3 (X64) on Linux (Red Hat Enterprise Linux 9.4)" }
+    sip: { user_agent: "FreeSWITCH-mod_sofia/1.10.11-release~64bit" }
     vnc: {}
     rdp: {}
 
@@ -114,6 +117,7 @@ windows-server-2019:
     redis: { version: "5.0.14.1" }
     ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.17763", naming_context: "DC=corp,DC=local" }
     mssql: { version: "15.0.2000.5", product: "Microsoft SQL Server 2019 (RTM) - 15.0.2000.5 (X64) on Windows Server 2019 Standard" }
+    sip: { user_agent: "3CX PhoneSystem 18.0.9.37" }
     vnc: {}
     rdp: {}
 
@@ -143,5 +147,6 @@ windows-server-2022:
     redis: { version: "5.0.14.1" }
     ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.20348", naming_context: "DC=ad,DC=local" }
     mssql: { version: "16.0.1000.6", product: "Microsoft SQL Server 2022 (RTM) - 16.0.1000.6 (X64) on Windows Server 2022 Standard" }
+    sip: { user_agent: "3CX PhoneSystem 20.0.2.945" }
     vnc: {}
     rdp: {}

@@ -206,3 +206,86 @@ class HandlerBase:
             await asyncio.wait_for(writer.wait_closed(), timeout=2)
         except OSError, TimeoutError, ssl.SSLError:
             pass
+
+
+class DatagramHandlerBase(HandlerBase):
+    """Base for UDP capabilities: one short-lived session per datagram source, a token bucket
+    per source address and a reply size bound (anti-amplification)."""
+
+    TRANSPORT = "udp"
+    BUCKET_SIZE = 20  # replies allowed in a burst per source
+    REFILL_PER_SECOND = 5.0
+    MAX_SOURCES = 4096
+    MAX_REPLY_RATIO = 3  # reply bytes <= ratio * request bytes
+
+    def __init__(self, options):
+        super().__init__(options)
+        self._buckets: dict[str, tuple[float, float]] = {}
+
+    async def create_datagram_endpoint(self, bind_host, port):
+        loop = asyncio.get_running_loop()
+        return await loop.create_datagram_endpoint(
+            lambda: _DatagramProtocol(self), local_addr=(bind_host, port)
+        )
+
+    def _allow(self, source_ip: str) -> bool:
+        now = time.monotonic()
+        tokens, last = self._buckets.get(source_ip, (float(self.BUCKET_SIZE), now))
+        tokens = min(self.BUCKET_SIZE, tokens + (now - last) * self.REFILL_PER_SECOND)
+        if tokens < 1:
+            self._buckets[source_ip] = (tokens, now)
+            return False
+        if len(self._buckets) >= self.MAX_SOURCES and source_ip not in self._buckets:
+            self._buckets.clear()  # crude but bounded
+        self._buckets[source_ip] = (tokens - 1, now)
+        return True
+
+    def handle_datagram(self, data: bytes, session) -> bytes | None:
+        """Return the reply for one datagram, or None. Overridden by the capability."""
+        raise NotImplementedError
+
+    def process_datagram(self, data: bytes, addr, local_addr) -> bytes | None:
+        if not self._allow(addr[0]):
+            return None
+        session = self.create_session(addr, local_addr)
+        try:
+            reply = self.handle_datagram(data, session)
+        except Exception as exc:  # same policy as handle_session: never a traceback
+            if isinstance(exc, _CLIENT_ERRORS):
+                logger.debug(
+                    "Client error in %s datagram [%s] %s", self.NAME, type(exc).__name__, exc
+                )
+            else:
+                self._warn_error(exc, session)
+            reply = None
+        finally:
+            self.close_session(session)
+        if reply and len(reply) > self.MAX_REPLY_RATIO * max(len(data), 1):
+            logger.debug(
+                "%s reply suppressed: %d bytes for a %d byte request",
+                self.NAME,
+                len(reply),
+                len(data),
+            )
+            return None
+        return reply
+
+
+class _DatagramProtocol(asyncio.DatagramProtocol):
+    def __init__(self, capability):
+        self.capability = capability
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        local = self.transport.get_extra_info("sockname") or ("0.0.0.0", self.capability.port)
+        reply = self.capability.process_datagram(data, addr, local)
+        if reply:
+            self.transport.sendto(reply, addr)
+
+    def error_received(self, exc):
+        logger.debug(
+            "%s datagram endpoint error [%s] %s", self.capability.NAME, type(exc).__name__, exc
+        )

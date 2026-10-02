@@ -27,7 +27,9 @@ EXPECTED = {
     "ldap": None,
     "ldaps": "implicit",
     "mssql": None,
+    "sip": None,
 }
+TRANSPORTS = {"sip": "tcp+udp"}
 
 
 def test_registry_names_and_tls():
@@ -35,7 +37,7 @@ def test_registry_names_and_tls():
     assert set(reg) == set(EXPECTED)
     for name, tls in EXPECTED.items():
         assert reg[name].TLS == tls, name
-        assert reg[name].TRANSPORT == "tcp"
+        assert reg[name].TRANSPORT == TRANSPORTS.get(name, "tcp")
 
 
 def test_registry_is_recursive():

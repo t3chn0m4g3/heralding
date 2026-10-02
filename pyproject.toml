@@ -37,6 +37,8 @@ dev = [
     "ldap3>=2.9",
     "python-tds>=1.17",
     "smbprotocol>=1.17",
+    "pyVoIP>=1.6",
+    "audioop-lts>=0.2",  # audioop was removed in 3.13; pyVoIP imports it
 ]
 
 [build-system]

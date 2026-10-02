@@ -40,6 +40,7 @@ class Honeypot:
         assert config is not None
         self.config = config
         self._servers = []
+        self._datagram_transports = []
         self.public_ip_task = None
         self._fqdn_task = None
         self.persona = None
@@ -149,6 +150,22 @@ class Honeypot:
             self._servers.append(server)
             listen_ports.append(port)
             logger.info("Started %s capability listening on port %s", cap_name, port)
+            if "udp" in cls.TRANSPORT:
+                hosts = bind_host if isinstance(bind_host, list) else [bind_host]
+                for host in hosts:
+                    try:
+                        transport, _ = await cap.create_datagram_endpoint(host, port)
+                    except OSError as exc:
+                        logger.error(
+                            "Could not start %s on udp port %s [%s] %s",
+                            cap_name,
+                            port,
+                            type(exc).__name__,
+                            exc,
+                        )
+                        raise
+                    self._datagram_transports.append(transport)
+                logger.info("Started %s capability listening on udp port %s", cap_name, port)
         get_hub().emit_listen_ports(listen_ports)
 
     async def stop(self):
@@ -164,6 +181,8 @@ class Honeypot:
             except TimeoutError:
                 pass
 
+        for transport in self._datagram_transports:
+            transport.close()
         for server in self._servers:
             server.close()  # stop accepting
         for server in self._servers:
