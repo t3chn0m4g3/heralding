@@ -81,7 +81,8 @@ class Smb(HandlerBase):
             if not 1 <= count <= 32 or 100 + count * 2 > len(request):
                 raise ValueError("invalid dialect list")
             offered = struct.unpack_from(f"<{count}H", request, 100)
-            supported = [d for d in offered if d in (0x0202, 0x0210)]
+            # 3.0 and 3.0.2 share the 2.x negotiate layout; 3.1.1 would need negotiate contexts
+            supported = [d for d in offered if d in (0x0202, 0x0210, 0x0300, 0x0302)]
             if not supported:
                 return _response(request, 0, struct.pack("<HBBI", 9, 0, 0, 0), NOT_SUPPORTED)
             dialect = max(supported)

@@ -22,6 +22,7 @@ async def test_standard_client_login_is_refused_and_material_logged(
         connection = Connection(uuid.uuid4(), host, port=port, require_signing=False)
         try:
             connection.connect(timeout=5)
+            assert connection.dialect == 0x0302  # highest dialect without negotiate contexts
             session = Session(
                 connection,
                 username="CORP\\alice",
