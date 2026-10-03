@@ -135,6 +135,9 @@ The domain, workstation, TLS version and selected security mode are session meta
 NLA attempts receive `STATUS_LOGON_FAILURE` after capture; Heralding never opens a desktop.
 Kerberos-only and Remote Credential Guard authentication are unsupported.
 
+Optional `protocol_specific_data.tls_max_version` limits the RDP TLS version, for example
+`TLSv1_2` for a client compatibility check. No maximum is selected by default.
+
 Self-signed certificate warnings are expected. If a client disconnects before sending
 credentials, its session can contain `rdp_requested_protocols` and `rdp_handshake_error`;
 there is no authentication row for credentials that the client never transmitted.
@@ -168,8 +171,6 @@ uv run pytest --cov
 Tests use standard clients for every protocol (stdlib clients, asyncssh, pymysql, psycopg,
 redis-py, paho-mqtt, ldap3, python-tds, pyVoIP, python-socks, vncdotool, telnetlib3, smbprotocol). RDP logins are checked
 manually with `xfreerdp`; CredSSP/NTLM capture uses automated pyspnego client tests.
-Feature coverage and container validation are recorded in
-[the completion audit](docs/superpowers/plans/2026-10-02-completion-audit.md).
 The reproducible container commands are in [tools/validation](tools/validation/README.md).
 
 ## Pcaps
