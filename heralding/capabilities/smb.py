@@ -1,6 +1,6 @@
 """SMB2 negotiation and NTLM credential capture; every login is refused.
 
-SMB1 multi-protocol negotiation upgrades to SMB2. SMB 2.0.2 / 2.1 are offered;
+SMB1 multi-protocol negotiation upgrades to SMB2. SMB 2.0.2 up to 3.1.1 are offered;
 file operations, Kerberos authentication and SMB3 encryption are not supported.
 """
 
@@ -18,6 +18,55 @@ MORE_PROCESSING = 0xC0000016
 LOGIN_FAILURE = 0xC000006D
 NOT_SUPPORTED = 0xC00000BB
 SMB2 = b"\xfeSMB"
+DIALECTS = (0x0202, 0x0210, 0x0300, 0x0302, 0x0311)
+PREAUTH_INTEGRITY = 0x0001
+ENCRYPTION = 0x0002
+SHA512 = 0x0001
+CIPHER_PREFERENCE = (0x0002, 0x0001, 0x0004, 0x0003)  # AES-128-GCM first, as Windows
+
+
+def _negotiate_contexts(request):
+    """Client negotiate contexts of an SMB 3.1.1 request: {type: data}, bounded."""
+    offset, count = struct.unpack_from("<IH", request, 92)
+    contexts = {}
+    for _ in range(min(count, 16)):
+        if offset + 8 > len(request):
+            break
+        kind, length = struct.unpack_from("<HH", request, offset)
+        data = request[offset + 8 : offset + 8 + length]
+        if len(data) < length:
+            raise ValueError("negotiate context out of range")
+        contexts.setdefault(kind, data)
+        offset += (8 + length + 7) // 8 * 8
+    return contexts
+
+
+def _context(kind, data):
+    return struct.pack("<HHI", kind, len(data), 0) + data
+
+
+def _ids(data, count_at=0, first_at=None):
+    """A count-prefixed list of 16-bit ids inside a context, bounded by the data length."""
+    if len(data) < count_at + 2:
+        return ()
+    count = struct.unpack_from("<H", data, count_at)[0]
+    first = count_at + 2 if first_at is None else first_at
+    count = min(count, max(0, (len(data) - first) // 2))
+    return struct.unpack_from(f"<{count}H", data, first)
+
+
+def _server_contexts(client):
+    """Preauth integrity (SHA-512 with a fresh salt) and, when offered, one cipher."""
+    # preauth data: hash count, salt length, hash ids, salt
+    if SHA512 not in _ids(client.get(PREAUTH_INTEGRITY, b""), 0, 4):
+        raise ValueError("SMB 3.1.1 client without SHA-512 preauth integrity")
+    salt = secrets.token_bytes(32)
+    contexts = [_context(PREAUTH_INTEGRITY, struct.pack("<HHH", 1, len(salt), SHA512) + salt)]
+    if ENCRYPTION in client:
+        ciphers = _ids(client[ENCRYPTION])
+        chosen = next((c for c in CIPHER_PREFERENCE if c in ciphers), 0)
+        contexts.append(_context(ENCRYPTION, struct.pack("<HH", 1, chosen)))
+    return contexts
 
 
 def _response(request, command, body, status=0, session_id=0):
@@ -81,19 +130,21 @@ class Smb(HandlerBase):
             if not 1 <= count <= 32 or 100 + count * 2 > len(request):
                 raise ValueError("invalid dialect list")
             offered = struct.unpack_from(f"<{count}H", request, 100)
-            # 3.0 and 3.0.2 share the 2.x negotiate layout; 3.1.1 would need negotiate contexts
-            supported = [d for d in offered if d in (0x0202, 0x0210, 0x0300, 0x0302)]
+            supported = [d for d in offered if d in DIALECTS]
             if not supported:
                 return _response(request, 0, struct.pack("<HBBI", 9, 0, 0, 0), NOT_SUPPORTED)
             dialect = max(supported)
+        contexts = _server_contexts(_negotiate_contexts(request)) if dialect == 0x0311 else []
         token = ntlm.initial_token()
         filetime = int((time.time() + 11644473600) * 10000000)
+        # negotiate contexts follow the security buffer, 8-byte aligned (offsets from header)
+        context_offset = (128 + len(token) + 7) // 8 * 8 if contexts else 0
         body = struct.pack(
             "<HHHH16sIIIIQQHHI",
             65,
             1,
             dialect,
-            0,
+            len(contexts),
             self.guid,
             0,
             MAX_MESSAGE,
@@ -103,9 +154,12 @@ class Smb(HandlerBase):
             0,
             128,
             len(token),
-            0,
+            context_offset,
         )
-        return _response(request, 0, body + token)
+        message = body + token
+        for context in contexts:
+            message += b"\0" * ((-(64 + len(message))) % 8) + context
+        return _response(request, 0, message)
 
     async def execute_capability(self, reader, writer, session):
         challenge = secrets.token_bytes(8)

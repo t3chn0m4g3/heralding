@@ -22,7 +22,9 @@ async def test_standard_client_login_is_refused_and_material_logged(
         connection = Connection(uuid.uuid4(), host, port=port, require_signing=False)
         try:
             connection.connect(timeout=5)
-            assert connection.dialect == 0x0302  # highest dialect without negotiate contexts
+            assert connection.dialect == 0x0311
+            assert connection.preauth_integrity_hash_id == 0x0001  # SHA-512
+            assert connection.cipher_id == 0x0002  # AES-128-GCM, as Windows prefers
             session = Session(
                 connection,
                 username="CORP\\alice",
