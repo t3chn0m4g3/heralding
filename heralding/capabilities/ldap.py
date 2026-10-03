@@ -176,7 +176,9 @@ class Ldap(HandlerBase):
                 password_hash=password_hash,
             )
             return None
-        raise ValueError("unexpected NTLM message")
+        # a response without our challenge on this connection cannot be checked or cracked;
+        # AD answers it like any failed bind
+        return None
 
     async def _search(self, writer, message_id, op):
         fields = op.children()

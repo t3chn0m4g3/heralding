@@ -241,3 +241,28 @@ async def test_gss_spnego_ntlm_bind_is_captured_on_active_directory(serve, sink,
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert attempt["username"] == "CORP\\bob"
     assert attempt["password_hash"].startswith("bob::CORP:")
+
+
+async def test_ntlm_response_without_challenge_fails_like_ad(serve, sink, windows_persona):
+    import spnego
+    from ldap3.protocol.sasl.sasl import send_sasl_negotiation
+
+    host, port = await serve(ldap.Ldap(make_options()))
+
+    def connection():
+        conn = ldap3.Connection(_server(host, port), receive_timeout=5)
+        conn.open()
+        conn.sasl_mechanism = "GSS-SPNEGO"
+        return conn
+
+    def run():
+        client = spnego.client("CORP\\bob", "hunter2", protocol="negotiate")
+        first = connection()
+        challenge = send_sasl_negotiation(first, None, client.step())["saslCreds"]
+        # the answer to the first connection's challenge arrives on a second one
+        second = connection()
+        result = send_sasl_negotiation(second, None, client.step(challenge))["result"]
+        assert second.search("", "(objectClass=*)", search_scope=ldap3.BASE)  # still served
+        return result
+
+    assert await asyncio.to_thread(run) == 49
