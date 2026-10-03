@@ -16,9 +16,12 @@
 """SIP capability (UDP and TCP): REGISTER/INVITE are challenged, offered credentials are
 logged (hashcat 11400 layout), OPTIONS gets a persona User-Agent."""
 
+import hashlib
+import hmac
 import logging
 import re
 import secrets
+import time
 
 from heralding.capabilities.handlerbase import DatagramHandlerBase
 from heralding.misc.textutil import decode_lossless
@@ -26,6 +29,7 @@ from heralding.misc.textutil import decode_lossless
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE = 8192
+NONCE_LIFETIME = 3600  # seconds a challenge nonce is accepted for
 _REQUEST_LINE = re.compile(r"^([A-Z]+) (\S+) SIP/2\.0$")
 _PARAM = re.compile(r'(\w+)=("([^"]*)"|([^,\s]*))')
 COPIED_HEADERS = ("via", "from", "to", "call-id", "cseq")
@@ -61,6 +65,33 @@ class Sip(DatagramHandlerBase):
     NAME = "sip"
     TRANSPORT = "tcp+udp"
 
+    def __init__(self, options):
+        super().__init__(options)
+        self._nonce_key = secrets.token_bytes(32)
+
+    def _nonce(self, source_ip, issued=None):
+        """Nonce bound to the source address: hex timestamp + HMAC. Over UDP only a source that
+        received our challenge can answer it, so spoofed senders never reach the auth log."""
+        stamp = f"{int(time.time() if issued is None else issued) & 0xFFFFFFFF:08x}"
+        mac = hmac.new(self._nonce_key, f"{stamp}|{source_ip}".encode(), hashlib.sha256)
+        return stamp + mac.hexdigest()[:24]
+
+    def _nonce_valid(self, nonce, source_ip):
+        try:
+            issued = int(nonce[:8], 16)
+        except ValueError:
+            return False
+        if len(nonce) != 32 or not 0 <= time.time() - issued <= NONCE_LIFETIME:
+            return False
+        return hmac.compare_digest(nonce, self._nonce(source_ip, issued))
+
+    def _challenge(self, session, headers):
+        challenge = (
+            f'Digest realm="{self._realm()}", nonce="{self._nonce(session.source_ip)}", '
+            "algorithm=MD5"
+        )
+        return self._build(401, "Unauthorized", headers, ["WWW-Authenticate: " + challenge])
+
     def valid_datagram(self, data):
         return len(data) <= MAX_MESSAGE and parse_message(data) is not None
 
@@ -91,17 +122,13 @@ class Sip(DatagramHandlerBase):
         if method not in ("REGISTER", "INVITE"):
             return self._build(405, "Method Not Allowed", headers)
         creds = parse_digest(headers.get("authorization") or headers.get("proxy-authorization", ""))
-        if not creds.get("username"):
-            challenge = (
-                f'Digest realm="{self._realm()}", nonce="{secrets.token_hex(16)}", algorithm=MD5'
-            )
-            return self._build(401, "Unauthorized", headers, ["WWW-Authenticate: " + challenge])
-        self._log_attempt(session, method, uri, creds)
+        if creds.get("username"):
+            if transport == "TCP" or self._nonce_valid(creds.get("nonce", ""), session.source_ip):
+                self._log_attempt(session, method, uri, creds)
+            else:
+                logger.debug("%s credentials with a foreign nonce ignored", self.NAME)
         # like Asterisk: wrong credentials get a fresh challenge, not a 403
-        challenge = (
-            f'Digest realm="{self._realm()}", nonce="{secrets.token_hex(16)}", algorithm=MD5'
-        )
-        return self._build(401, "Unauthorized", headers, ["WWW-Authenticate: " + challenge])
+        return self._challenge(session, headers)
 
     @staticmethod
     def _log_attempt(session, method, uri, creds):

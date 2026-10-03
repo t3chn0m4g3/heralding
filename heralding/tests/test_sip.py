@@ -127,3 +127,34 @@ async def test_udp_sessions_reused_and_expire_without_client_close(sink):
     assert len(ended) == 1
     assert len(ended[0]["auxiliary_data"]["commands"]) == 2
     assert HandlerBase.global_sessions == 0
+
+
+async def test_udp_credentials_count_only_from_the_source_that_got_the_challenge(sink):
+    from pyVoIP.SIP import SIPClient, SIPMessage
+
+    cap = sip.Sip(make_options())
+    client = SIPClient("127.0.0.1", 5060, "1001", "secret", None, myPort=0)
+    local, real, spoofed = ("127.0.0.1", 5060), ("192.0.2.1", 5060), ("198.51.100.7", 5060)
+    try:
+        challenge = SIPMessage(
+            cap.process_datagram(client.gen_first_response().encode(), real, local)
+        )
+        answer = client.gen_register(challenge).encode()
+        assert int(SIPMessage(cap.process_datagram(answer, spoofed, local)).status) == 401
+        assert sink.auth == []
+        assert int(SIPMessage(cap.process_datagram(answer, real, local)).status) == 401
+        attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+        assert attempt["source_ip"] == "192.0.2.1" and attempt["username"] == "1001"
+    finally:
+        cap.close_datagram_sessions()
+
+
+def test_nonce_expires(monkeypatch):
+    cap = sip.Sip(make_options())
+    nonce = cap._nonce("192.0.2.1")
+    assert len(nonce) == 32 and cap._nonce_valid(nonce, "192.0.2.1")
+    assert not cap._nonce_valid(nonce, "192.0.2.2")
+    assert not cap._nonce_valid("zz" + nonce[2:], "192.0.2.1")
+    later = sip.time.time() + sip.NONCE_LIFETIME + 5
+    monkeypatch.setattr(sip.time, "time", lambda: later)
+    assert not cap._nonce_valid(nonce, "192.0.2.1")
