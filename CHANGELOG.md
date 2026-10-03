@@ -34,6 +34,10 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
   Apache, nginx or IIS pages, MySQL/MariaDB greetings per version, ProFTPD/vsftpd/IIS FTP and
   Postfix/Exchange SMTP wording, STARTTLS on port 25, POP3 CRLF, LDAP rootDSE per server, OpenSSH
   host keys and algorithm lists, SMB 3.0, 3.0.2 and 3.1.1 (preauth integrity and cipher contexts).
+- Second review: a failing STARTTLS certificate no longer stops the start, resource errors stay
+  visible in the event loop handler, strict SIP nonce format, telnet asks for client values once,
+  NTLM grants requested signing/key exchange, SMB answers the Server 2022 signing context and
+  refuses bad contexts, SSH algorithms follow the banner version, 30-year MSSQL certificate.
 - LDAP with a Windows persona captures NTLM binds over Sicily and SASL GSS-SPNEGO like Active
   Directory, with AD's failure message.
 - Telnet records the client's terminal type, environment variables and window size.
