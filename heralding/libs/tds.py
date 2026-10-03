@@ -2,9 +2,12 @@
 LOGIN7 parsing, ERROR/DONE response building. Everything is length-bounded."""
 
 import asyncio
+import ssl
 import struct
 
 MAX_PACKET = 32 * 1024
+HANDSHAKE_PACKET = 4096  # packet size before LOGIN7 negotiates another one
+MAX_HANDSHAKE_ROUNDS = 8
 
 TYPE_SQL_BATCH = 0x01
 TYPE_LOGIN7 = 0x10
@@ -45,6 +48,93 @@ async def read_packet(reader):
 
 def packet(packet_type: int, payload: bytes, status: int = 0x01) -> bytes:
     return struct.pack(">BBHHBB", packet_type, status, 8 + len(payload), 0, 1, 0) + payload
+
+
+def packets(packet_type: int, payload: bytes, size: int = HANDSHAKE_PACKET) -> bytes:
+    """Split a message into packets of at most `size` bytes; the last one carries EOM."""
+    step = size - 8
+    chunks = [payload[i : i + step] for i in range(0, len(payload), step)] or [b""]
+    return b"".join(
+        packet(packet_type, chunk, 0x01 if i == len(chunks) - 1 else 0x00)
+        for i, chunk in enumerate(chunks)
+    )
+
+
+def server_encryption(client_flag: int | None) -> int:
+    """What SQL Server (which always has at least its self-signed certificate) answers."""
+    if client_flag in (ENCRYPT_ON, ENCRYPT_REQ):
+        return ENCRYPT_ON
+    if client_flag == ENCRYPT_OFF:
+        return ENCRYPT_OFF  # only the LOGIN7 packet is encrypted
+    return ENCRYPT_NOT_SUP
+
+
+class TdsTls:
+    """TLS as TDS 7.x uses it: handshake records travel inside PRELOGIN packets, afterwards
+    the TLS records go over the connection directly and carry the TDS packets."""
+
+    def __init__(self, context: ssl.SSLContext, reader, writer):
+        self._in = ssl.MemoryBIO()
+        self._out = ssl.MemoryBIO()
+        self._ssl = context.wrap_bio(self._in, self._out, server_side=True)
+        self.reader = reader
+        self.writer = writer
+
+    @property
+    def version(self) -> str:
+        return self._ssl.version() or ""
+
+    async def handshake(self):
+        for _ in range(MAX_HANDSHAKE_ROUNDS):
+            try:
+                self._ssl.do_handshake()
+            except ssl.SSLWantReadError:
+                await self._send_wrapped()
+                packet_type, payload = await read_packet(self.reader)
+                if packet_type != TYPE_PRELOGIN:
+                    raise TdsError("expected TLS handshake in PRELOGIN packets") from None
+                self._in.write(payload)
+                continue
+            await self._send_wrapped()
+            return
+        raise TdsError("TLS handshake did not finish")
+
+    async def _send_wrapped(self):
+        data = self._out.read()
+        if data:
+            self.writer.write(packets(TYPE_PRELOGIN, data))
+            await self.writer.drain()
+
+    async def _read_plain(self, size: int) -> bytes:
+        buf = b""
+        while len(buf) < size:
+            try:
+                chunk = self._ssl.read(size - len(buf))
+            except ssl.SSLWantReadError:
+                data = await self.reader.read(16 * 1024)
+                if not data:
+                    raise asyncio.IncompleteReadError(buf, size) from None
+                self._in.write(data)
+                continue
+            except ssl.SSLZeroReturnError:
+                raise asyncio.IncompleteReadError(buf, size) from None
+            if not chunk:
+                raise asyncio.IncompleteReadError(buf, size)
+            buf += chunk
+        return buf
+
+    async def read_packet(self):
+        """One TDS packet from inside TLS: (type, payload)."""
+        header = await self._read_plain(8)
+        length = struct.unpack(">H", header[2:4])[0]
+        if length < 8 or length > MAX_PACKET:
+            raise TdsError("bad TDS packet length")
+        return header[0], await self._read_plain(length - 8)
+
+    async def write(self, data: bytes):
+        self._ssl.write(data)
+        self.writer.write(self._out.read())
+        await self.writer.drain()
 
 
 def parse_prelogin(payload: bytes) -> dict[int, bytes]:

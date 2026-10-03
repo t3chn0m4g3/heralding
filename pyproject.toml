@@ -44,6 +44,8 @@ dev = [
     "pytest-cov>=7.1.0",
     "hpfeeds3>=0.9.10",  # exercise the actual optional client's retry behavior
     "pyspnego>=0.12",  # standard CredSSP/NTLM client for RDP NLA regression tests
+    "pyopenssl>=25",
+    "service-identity>=24",
 ]
 
 [build-system]

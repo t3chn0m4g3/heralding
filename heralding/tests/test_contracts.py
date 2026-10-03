@@ -110,6 +110,13 @@ async def test_honeypot_starts_with_explicit_or_legacy_config(tmp_path, monkeypa
         assert smtp.SMTPHandler.fqdn == HandlerBase.persona.fqdn
         assert (tmp_path / "persona.state").exists()
         assert (tmp_path / "https.pem.persona").read_text() == HandlerBase.persona.fqdn
+        # MSSQL's login TLS uses a certificate named like SQL Server's self-signed one
+        from cryptography import x509
+
+        mssql_cert = x509.load_pem_x509_certificate((tmp_path / "mssql.pem").read_bytes())
+        assert mssql_cert.subject.rfc4514_string() == "CN=SSL_Self_Signed_Fallback"
+        mssql_cap = next(c for c in honeypot._capabilities if c.NAME == "mssql")
+        assert mssql_cap.starttls_context is not None
         # a second start in the same directory keeps the identity and the certificates
         pem_before = (tmp_path / "https.pem").read_bytes()
         identity = (HandlerBase.persona.name, HandlerBase.persona.hostname)

@@ -153,7 +153,7 @@ class Honeypot:
                 psd = cap_cfg.get("protocol_specific_data") or {}
                 pem_file = certs.ensure_cert(
                     f"{cap_name}.pem",
-                    self._cert_subject(psd.get("cert")),
+                    self._subject_for(cls, psd),
                     persona_tag=self.persona.fqdn,
                 )
                 if cls.TLS == "implicit":
@@ -266,7 +266,7 @@ class Honeypot:
         try:
             pem_file = certs.ensure_cert(
                 f"{cap_name}.pem",
-                self._cert_subject(psd.get("cert")),
+                self._subject_for(type(cap), psd),
                 persona_tag=self.persona.fqdn,
             )
             min_version = psd.get("tls_min_version") or self.config.get(
@@ -281,6 +281,13 @@ class Honeypot:
                 type(exc).__name__,
                 exc,
             )
+
+    def _subject_for(self, cls, psd):
+        """A capability may name the subject its real counterpart uses (CERT_SUBJECT); an
+        explicit `cert` block in the config still wins."""
+        if psd.get("cert") is None and getattr(cls, "CERT_SUBJECT", None):
+            return dict(cls.CERT_SUBJECT)
+        return self._cert_subject(psd.get("cert"))
 
     def _cert_subject(self, cert_cfg):
         """Explicit certificate subject fields win; unset ones ("None", "", "*") come from the persona."""

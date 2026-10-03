@@ -272,6 +272,8 @@ capabilities:
     protocol_specific_data:
       # SQL Server version reported in PRELOGIN; empty = from persona
       version: ""
+      # the encrypted login uses a certificate named like SQL Server's self-signed one
+      # (CN=SSL_Self_Signed_Fallback); a cert: block here replaces it
 
   ldap:
     enabled: true

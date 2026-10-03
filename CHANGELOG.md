@@ -35,6 +35,9 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
   Postfix/Exchange SMTP wording, STARTTLS on port 25, POP3 CRLF, LDAP rootDSE per server, OpenSSH
   host keys and algorithm lists, SMB 3.0/3.0.2.
 - Telnet records the client's terminal type, environment variables and window size.
+- MSSQL answers the client's encryption wish like SQL Server (login-only or full TLS inside TDS,
+  certificate `CN=SSL_Self_Signed_Fallback`), so clients that require encryption, such as ODBC
+  Driver 18, also send their login.
 - Standard clients across the suite; optional sinks and privilege changes tested.
   The actual hpfeeds3 client uses bounded socket I/O and a single connection attempt;
   library authentication and publishing are checked against a local test broker.

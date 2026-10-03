@@ -130,6 +130,15 @@ timestamp,auth_id,session_id,source_ip,source_port,destination_ip,destination_po
 `=HYPERLINK("http://evil")` ends up verbatim in the CSV. Do not open these files in a spreadsheet
 application with formula evaluation enabled.
 
+### MSSQL encryption
+
+Like SQL Server with its self-signed certificate (`CN=SSL_Self_Signed_Fallback`), Heralding answers
+the client's PRELOGIN encryption wish: clients asking for login-only encryption get TLS for the
+LOGIN7 packet, clients requiring encryption get a fully encrypted connection, others stay in
+plaintext. Credentials are captured in all three cases; `tls_version` and `client_encryption` are
+session metadata. TLS is limited to 1.2, as SQL Server does with TDS 7.x. TDS 8 (strict
+encryption, TLS before PRELOGIN) is not supported.
+
 ### RDP authentication
 
 TLS-only RDP captures the username, password and domain from Client Info. NLA/CredSSP
