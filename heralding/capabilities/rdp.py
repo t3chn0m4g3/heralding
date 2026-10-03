@@ -18,6 +18,7 @@ import logging
 import struct
 
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.libs.msrdp import credssp
 from heralding.libs.msrdp.parser import (
     AttachUserRequestPDU,
     ClientInfoPDU,
@@ -84,6 +85,7 @@ class RDP(HandlerBase):
             data = await self.recv_next_tpkt(reader)
             cr_pdu = x224ConnectionRequestPDU()
             cr_pdu.parse(data)
+            session.set_auxiliary_data({"rdp_requested_protocols": cr_pdu.reqProtocols or 0})
 
             client_reqProto = 1  # set default to tls
             if cr_pdu.reqProtocols:
@@ -108,6 +110,10 @@ class RDP(HandlerBase):
                 return
             tls_obj = TLS(writer, reader, context=self.tls_context)
             await tls_obj.do_tls_handshake()
+
+            if cc_pdu_obj.selected_protocol == 2:
+                await credssp.capture(tls_obj, session, HandlerBase.persona)
+                return
 
             # Now using send_data and recv_next_tpkt
             data = await self.recv_next_tpkt(reader, tls_obj)
@@ -169,7 +175,13 @@ class RDP(HandlerBase):
             session.add_auth_attempt("plaintext", username=username, password=password)
 
             session.end_session()
-        except InvalidExpectedData, TLSHandshakeError, asyncio.IncompleteReadError:
-            logger.debug("Malformed packet detected. Closing session.")
+        except (
+            InvalidExpectedData,
+            TLSHandshakeError,
+            asyncio.IncompleteReadError,
+            ValueError,
+        ) as exc:
+            logger.debug("RDP handshake ended before credential capture: %s", exc)
+            session.set_auxiliary_data({"rdp_handshake_error": str(exc)})
             session.end_session()
             return

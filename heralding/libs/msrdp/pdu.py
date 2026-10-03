@@ -47,6 +47,7 @@ class x224ConnectionConfirmPDU:
         self.options = b"\x00"
         self.reqProto = reqProto
         self.sentNegoFail = False
+        self.selected_protocol = 0
 
     def generate(self):
         PROTOCOL_SSL = 0x00000001
@@ -55,12 +56,14 @@ class x224ConnectionConfirmPDU:
         len_indicator = len(data)  # 1byte length of PDU without indicator byte
 
         if self.reqProto:
-            selectedProto = self.reqProto & PROTOCOL_SSL  # for now only tls
+            # Prefer NLA when offered; TLS-only clients retain the classic flow.
+            selectedProto = 2 if self.reqProto & 2 else self.reqProto & PROTOCOL_SSL
+            self.selected_protocol = selectedProto
             proto_bytes = Uint32LE.pack(selectedProto)
             nego_res = b"\x02\x00\x08\x00" + proto_bytes
 
             # send NegoFail when a non-TLS method is requested
-            if not (selectedProto == PROTOCOL_SSL):
+            if selectedProto not in (PROTOCOL_SSL, 2):
                 self.sentNegoFail = True
                 nego_res = b"\x03\x00\x08\x00" + b"\x01" + bytes(3)  # SSL required by server
             len_indicator += len(nego_res)

@@ -44,7 +44,7 @@ _CLIENT_ERRORS = (
 
 
 class HandlerBase:
-    NAME: str = ""  # protocol name as logged; part of the T-Pot contract for existing services
+    NAME: str = ""  # stable protocol name in the public log format
     TLS: str | None = None  # "implicit" | "starttls" | None
     TRANSPORT: str = "tcp"  # "tcp" | "udp"
     NEEDS_CERT: bool = False  # capability handles TLS itself but needs <NAME>.pem in CWD

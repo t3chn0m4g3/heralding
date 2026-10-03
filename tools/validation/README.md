@@ -13,17 +13,10 @@ docker build -t heralding:2.0-dev .
 docker build -t heralding:validation-tools tools/validation
 docker build -f tools/validation/Dockerfile.tests -t heralding:linux-tests tools/validation
 docker run --rm -v "$PWD:/src:ro" heralding:linux-tests
-uv run python tools/validation/check_tpot.py ../tpotce
-tools/validation/build_tpot.sh ../tpotce heralding:tpot-dev
 ```
 
-`free_port_logins.py` probes LDAP/LDAPS/FTPS/MQTTS against the built T-Pot container;
-invoke it like `client_logins.py` below, substituting the T-Pot container name. Its config
-can retain every T-Pot setting while disabling only the external public-IP lookup.
-
-The last command archives the commit pinned in T-Pot's Dockerfile into a temporary named
-build context. It works with local commits. The Dockerfile's remote source stage requires
-that commit to exist at the configured repository; it is bypassed by the local context.
+Deployment-specific T-Pot checks and source builds are maintained in the T-Pot repository's
+`docker/heralding/validation/` directory.
 
 ## Isolated server
 
@@ -42,7 +35,7 @@ docker run -d --name heralding-audit-server --network heralding-audit \
 
 ## Standard clients
 
-Authentication is refused. Check the server's auth.csv and log_session.json as the success
+Authentication is refused. Check the server's log_auth.csv and log_session.json as the success
 criterion; authentication-error exit codes from clients are expected.
 
 ```sh
@@ -75,7 +68,7 @@ and repeating FreeRDP verifies that the loaded context survives file removal.
 
 ## Credential material
 
-Copy only the `password_hash` value from synthetic auth.csv rows to individual hash files.
+Copy only the `password_hash` value from synthetic log_auth.csv rows to individual hash files.
 A wordlist containing the single known password `AuditPass123` verifies the export.
 Use `hashcat --potfile-path /audit/audit.pot` in the tool container, with the audit directory
 mounted at `/audit`. Modes: NTLMv1 5500, NTLMv2 5600, CRAM-MD5 10200, MySQL 11200, SIP 11400.
@@ -90,16 +83,12 @@ docker run --rm -v "$audit_dir:/audit" heralding:validation-tools \
 VNC exports the John `$vnc$` format; the standard-client wordlist tests verify its response.
 Hashcat 6.2.6 in this image has no VNC module.
 
-## T-Pot smoke and cleanup
+## Cleanup
 
 ```sh
-../tpotce/docker/_tests/tests/heralding.sh --image heralding:2.0-dev
-../tpotce/docker/_tests/tests/heralding.sh --image heralding:tpot-dev
 docker stop --signal SIGINT heralding-audit-server
 docker rm heralding-audit-server
 docker network rm heralding-audit
 ```
 
-Remove the second TLS 1.0 server before removing the network. Smoke tests create and clean
-up their own isolated stacks. The T-Pot smoke script is an existing external compatibility
-fixture; its protocol probes are not copied into Heralding's standard-client suite.
+Remove any additional TLS server before removing the network.

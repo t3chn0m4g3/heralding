@@ -43,6 +43,7 @@ dev = [
     "telnetlib3>=5.0.1",
     "pytest-cov>=7.1.0",
     "hpfeeds3>=0.9.10",  # exercise the actual optional client's retry behavior
+    "pyspnego>=0.12",  # standard CredSSP/NTLM client for RDP NLA regression tests
 ]
 
 [build-system]

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from heralding.tests.test_tpot_compat import FIXTURES
+from heralding.tests.conftest import load_default_config
 
 FORBIDDEN = (
     "Traceback",
@@ -22,8 +22,8 @@ FORBIDDEN = (
 )
 
 
-def _tpot_config(tmp_path):
-    config = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
+def _test_config(tmp_path):
+    config = load_default_config()
     config["public_ip_as_destination_ip"] = False
     config["bind_host"] = "127.0.0.1"
     for key in ("session_csv_log_file", "session_json_log_file", "authentication_log_file"):
@@ -67,7 +67,7 @@ def _assert_clean(text):
 
 
 def test_sigint_clean_shutdown(tmp_path):
-    proc, log = _start(tmp_path, _tpot_config(tmp_path))
+    proc, log = _start(tmp_path, _test_config(tmp_path))
     try:
         _wait_started(proc, log)
         os.kill(proc.pid, signal.SIGINT)
@@ -82,7 +82,7 @@ def test_sigint_clean_shutdown(tmp_path):
 
 
 def test_sigint_with_active_session_exits_promptly(tmp_path):
-    config = _tpot_config(tmp_path)
+    config = _test_config(tmp_path)
     proc, log = _start(tmp_path, config)
     try:
         text = _wait_started(proc, log)
@@ -118,7 +118,7 @@ def test_sigint_with_active_session_exits_promptly(tmp_path):
 
 
 def test_unwritable_log_path_fails_fast_without_traceback(tmp_path):
-    config = _tpot_config(tmp_path)
+    config = _test_config(tmp_path)
     config["activity_logging"]["file"]["authentication_log_file"] = str(
         tmp_path / "does-not-exist" / "auth.csv"
     )
@@ -130,7 +130,7 @@ def test_unwritable_log_path_fails_fast_without_traceback(tmp_path):
 
 
 def test_port_conflict_fails_without_traceback(tmp_path):
-    config = _tpot_config(tmp_path)
+    config = _test_config(tmp_path)
     blocker = socket.socket()
     blocker.bind(("127.0.0.1", config["capabilities"]["ftp"]["port"]))
     blocker.listen(1)

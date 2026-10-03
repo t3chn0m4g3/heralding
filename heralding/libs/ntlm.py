@@ -1,4 +1,4 @@
-"""Bounded NTLM challenge and credential-material helpers for the SMB honeypot.
+"""Bounded NTLM challenge and credential-material helpers for honeypot protocols.
 
 Wire definitions: Microsoft MS-NLMP sections 2.2.1.2 and 2.2.1.3.
 No credentials are authenticated or forwarded.
@@ -36,7 +36,7 @@ def extract_message(token):
     return token[offset:]
 
 
-def challenge_message(challenge, hostname, domain, fqdn):
+def challenge_message(challenge, hostname, domain, fqdn, *, signing=False):
     target = domain.encode("utf-16-le")
     av = b""
     for kind, value in ((1, hostname.upper()), (2, domain.upper()), (3, fqdn), (4, domain)):
@@ -44,6 +44,8 @@ def challenge_message(challenge, hostname, domain, fqdn):
         av += struct.pack("<HH", kind, len(encoded)) + encoded
     av += struct.pack("<HH", 0, 0)
     flags = 0xA0888205  # Unicode, NTLM, extended security, target info, 128/56-bit support
+    if signing:
+        flags |= 0x40000030  # key exchange, signing and sealing for CredSSP
     return (
         SIGNATURE
         + struct.pack("<IHHII", 2, len(target), len(target), 48, flags)

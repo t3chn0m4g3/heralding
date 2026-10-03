@@ -14,6 +14,8 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
   values win.
 - Certificates with `cryptography` (SHA-256, random serial, mode 0600).
 - RDP works again with TLS 1.0 to 1.3.
+- RDP NLA/CredSSP captures NTLM challenge responses and explicitly refuses authentication;
+  generic TLS-only clients retain plaintext credential capture.
 - IPv6 listeners, auxiliary data with client command lines and SSH public-key attempts.
 - New services: redis, mqtt, mqtts, http_proxy, submission (STARTTLS), ftps and AUTH TLS on ftp,
   ldap, ldaps, mssql, sip (UDP and TCP), smb (SMB2 with NTLMv1/v2).
@@ -25,6 +27,8 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
   The actual hpfeeds3 client uses bounded socket I/O and a single connection attempt;
   library authentication and publishing are checked against a local test broker.
 - T-Pot integration adds only free ports and accepts both SOCKS5 reply versions.
+- Downstream T-Pot fixtures, integration probes and build scripts live in T-Pot's repository;
+  standalone Docker logging retains Heralding's generic filenames.
 - Behaviour changes: SOCKS5 replies follow RFC 1929; MySQL logins have an empty `password` and the
   challenge material in `password_hash`; VNC `password_hash` is a string.
 

@@ -24,8 +24,7 @@ COPY --from=build /opt/heralding /opt/heralding
 COPY heralding/heralding.yml /etc/heralding/heralding.yml
 # in the container the activity logs belong on the log volume, not in the tmpfs work dir
 RUN sed -i -E 's#_log_file: "(log_[a-z_]+\.(csv|json))"#_log_file: "/var/log/heralding/\1"#' \
-        /etc/heralding/heralding.yml \
-    && sed -i 's#/var/log/heralding/log_auth.csv#/var/log/heralding/auth.csv#' /etc/heralding/heralding.yml
+        /etc/heralding/heralding.yml
 # bind ports < 1024 without root; the venv's python links to the system binary
 RUN setcap cap_net_bind_service=+ep "$(readlink -f /opt/heralding/.venv/bin/python)" \
     && apk del libcap

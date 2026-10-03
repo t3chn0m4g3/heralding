@@ -1,21 +1,19 @@
-"""Guards the log format that T-Pot (logstash, ewsposter, smoke test) consumes."""
+"""Stable public log format and generic configuration/startup contracts."""
 
 import asyncio
 import csv
 import io
 import json
 import re
-from pathlib import Path
 
 import pytest
-import yaml
 
 from heralding.misc.session import Session
 from heralding.reporting.file_sink import AUTH_FIELDS, FileSink
 from heralding.reporting.hub import ReportingHub, set_hub
+from heralding.tests.conftest import load_default_config
 
 TS_RE = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{6}$")
-FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _run_session(tmp_path):
@@ -48,7 +46,7 @@ def test_auth_csv_positions_and_header(tmp_path):
     assert row["protocol"] == "ftp"
     assert row["username"] == "user,with,commas"
     assert row["password"] == 'pa"ss'
-    # ewsposter: line[0:19] is the second-resolution timestamp
+    # A CSV row starts with the timestamp, independently of downstream consumers.
     assert re.match(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$", lines[1][0:19])
 
 
@@ -60,33 +58,6 @@ def test_session_json_contract(tmp_path):
     assert event["num_auth_attempts"] == 1
     assert event["auth_attempts"][0]["username"] == "user,with,commas"
     assert event["auth_attempts"][0]["password"] == 'pa"ss'
-
-
-def test_tpot_config_loads():
-    config = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
-    assert (
-        config["activity_logging"]["file"]["authentication_log_file"]
-        == "/var/log/heralding/auth.csv"
-    )
-    assert config["public_ip_as_destination_ip"] is True
-    assert set(config["capabilities"]) == {
-        "ftp",
-        "telnet",
-        "pop3",
-        "pop3s",
-        "postgresql",
-        "imap",
-        "imaps",
-        "ssh",
-        "http",
-        "https",
-        "smtp",
-        "smtps",
-        "vnc",
-        "socks5",
-        "mysql",
-        "rdp",
-    }
 
 
 def test_session_start_event_does_not_alias_live_lists(tmp_path):
@@ -109,16 +80,19 @@ def test_session_start_event_does_not_alias_live_lists(tmp_path):
     assert start_event["auth_attempts"] == []  # a copy taken at emit time, not the live list
 
 
-@pytest.mark.parametrize("fixture_name", ["tpot_heralding.yml", "tpot_heralding_2.yml"])
-async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch, fixture_name):
-    """Review focus 1: T-Pot's config (no persona key, mysql without protocol_specific_data)."""
+@pytest.mark.parametrize("legacy", [True, False])
+async def test_honeypot_starts_with_explicit_or_legacy_config(tmp_path, monkeypatch, legacy):
+    """Older configs may omit persona and optional protocol settings."""
     from heralding.capabilities import smtp
     from heralding.capabilities.handlerbase import HandlerBase
     from heralding.honeypot import Honeypot
     from heralding.reporting.memory_sink import MemorySink
 
     monkeypatch.chdir(tmp_path)
-    config = yaml.safe_load((FIXTURES / fixture_name).read_text())
+    config = load_default_config()
+    if legacy:
+        config.pop("persona", None)
+        config["capabilities"]["mysql"].pop("protocol_specific_data", None)
     config["public_ip_as_destination_ip"] = False
     config["bind_host"] = "127.0.0.1"
     for cap in config["capabilities"].values():
@@ -154,14 +128,12 @@ async def test_honeypot_starts_with_tpot_config(tmp_path, monkeypatch, fixture_n
 
 async def test_honeypot_starts_with_default_config(tmp_path, monkeypatch):
     """All capabilities of the shipped heralding.yml, including the UDP endpoint, start and stop."""
-    from importlib import resources
-
     from heralding.capabilities.handlerbase import HandlerBase
     from heralding.honeypot import Honeypot
     from heralding.reporting.memory_sink import MemorySink
 
     monkeypatch.chdir(tmp_path)
-    config = yaml.safe_load(resources.files("heralding").joinpath("heralding.yml").read_text())
+    config = load_default_config()
     config["bind_host"] = "127.0.0.1"
     for cap in config["capabilities"].values():
         cap["port"] = 0
@@ -199,7 +171,7 @@ async def test_unloadable_starttls_cert_keeps_plain_auth_working(
     monkeypatch.chdir(tmp_path)
     (tmp_path / f"{name}.pem").write_text("not a certificate")
     caplog.set_level(logging.WARNING)
-    config = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
+    config = load_default_config()
     config["public_ip_as_destination_ip"] = False
     config["bind_host"] = "127.0.0.1"
     cap_config = dict(config["capabilities"]["ftp"], port=0)

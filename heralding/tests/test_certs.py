@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives import hashes
 
 from heralding.misc import certs
 
-TPOT_CERT_CFG = {
+LEGACY_CERT_CFG = {
     "common_name": "*",
     "country": "US",
     "state": "None",
@@ -20,7 +20,7 @@ TPOT_CERT_CFG = {
 
 
 def test_none_strings_are_unset(tmp_path):
-    pem = certs.ensure_cert(str(tmp_path / "x.pem"), TPOT_CERT_CFG)
+    pem = certs.ensure_cert(str(tmp_path / "x.pem"), LEGACY_CERT_CFG)
     cert = x509.load_pem_x509_certificate(open(pem, "rb").read())
     names = {attr.oid._name for attr in cert.subject}
     assert names == {"countryName", "commonName"}
@@ -33,7 +33,7 @@ def test_none_strings_are_unset(tmp_path):
 
 
 def test_pem_loads_into_ssl_context(tmp_path):
-    pem = certs.ensure_cert(str(tmp_path / "x.pem"), TPOT_CERT_CFG)
+    pem = certs.ensure_cert(str(tmp_path / "x.pem"), LEGACY_CERT_CFG)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(pem)  # raises if cert and key do not match
 

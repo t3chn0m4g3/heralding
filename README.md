@@ -114,7 +114,7 @@ timestamp,duration,session_id,source_ip,source_port,destination_ip,destination_p
 ### log_auth.csv
 
 One line per authentication attempt, written as soon as the credentials arrive. The first ten
-columns are fixed; T-Pot's logstash and ewsposter read them by position. New columns are only ever
+columns are stable for external consumers. New columns are only ever
 appended. `password_hash` is set for protocols that never send the password in clear (for example
 MySQL, VNC, SMTP CRAM-MD5, SIP and SMB) and uses formats that hashcat or John the Ripper understand.
 
@@ -127,6 +127,20 @@ timestamp,auth_id,session_id,source_ip,source_port,destination_ip,destination_po
 `=HYPERLINK("http://evil")` ends up verbatim in the CSV. Do not open these files in a spreadsheet
 application with formula evaluation enabled.
 
+### RDP authentication
+
+TLS-only RDP captures the username, password and domain from Client Info. NLA/CredSSP
+captures NTLMv1/v2 challenge-response material in `password_hash`, with an empty `password`.
+The domain, workstation, TLS version and selected security mode are session metadata.
+NLA attempts receive `STATUS_LOGON_FAILURE` after capture; Heralding never opens a desktop.
+Kerberos-only and Remote Credential Guard authentication are unsupported.
+
+Self-signed certificate warnings are expected. If a client disconnects before sending
+credentials, its session can contain `rdp_requested_protocols` and `rdp_handshake_error`;
+there is no authentication row for credentials that the client never transmitted.
+CredSSP framing and failure responses follow Microsoft's
+[MS-CSSP specification](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp/6aac4dea-08ef-47a6-8747-22ea7f6d8685).
+
 ## Docker
 
 ```shell
@@ -135,11 +149,13 @@ mkdir -p log
 sudo chown 2000:2000 log
 docker run --read-only --tmpfs /tmp/heralding:uid=2000,gid=2000 \
   -v "$PWD/log:/var/log/heralding" -p 2121:21 -p 2222:22 heralding
-tail log/auth.csv
+tail log/log_auth.csv
 ```
 
-The image runs as uid 2000 with a read-only root filesystem. Logs go to `/var/log/heralding`; the authentication log is `auth.csv` in the container
-(`log_auth.csv` when running directly). The mounted log directory must be writable by uid 2000.
+The image runs as uid 2000 with a read-only root filesystem. Logs go to `/var/log/heralding`;
+the authentication log is `log_auth.csv`, matching the standalone defaults.
+The mounted log directory must be writable by uid 2000. Deployment-specific names and
+configuration belong in the consuming project's image and configuration.
 
 ## Running the tests
 
@@ -151,7 +167,8 @@ uv run pytest --cov
 
 Tests use standard clients for every protocol (stdlib clients, asyncssh, pymysql, psycopg,
 redis-py, paho-mqtt, ldap3, python-tds, pyVoIP, python-socks, vncdotool, telnetlib3, smbprotocol). RDP logins are checked
-manually with `xfreerdp`. Feature coverage and container validation are recorded in
+manually with `xfreerdp`; CredSSP/NTLM capture uses automated pyspnego client tests.
+Feature coverage and container validation are recorded in
 [the completion audit](docs/superpowers/plans/2026-10-02-completion-audit.md).
 The reproducible container commands are in [tools/validation](tools/validation/README.md).
 

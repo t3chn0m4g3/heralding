@@ -69,7 +69,7 @@ class SSH(asyncssh.SSHServer, HandlerBase):
         return True
 
     def validate_public_key(self, username, key):
-        # Key attempts are not credentials: they go to auxiliary data, never to auth.csv
+        # Key attempts are not credentials: they go to auxiliary data, never to the authentication CSV
         if len(self._pubkeys) < 20:
             self._pubkeys.append(
                 {

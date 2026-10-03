@@ -1,8 +1,10 @@
 import asyncio
 import ssl
 from collections.abc import Awaitable, Callable
+from importlib import resources
 
 import pytest
+import yaml
 
 from heralding.reporting.hub import ReportingHub, set_hub
 from heralding.reporting.memory_sink import MemorySink
@@ -74,3 +76,8 @@ def client_ssl_context() -> ssl.SSLContext:
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+
+def load_default_config():
+    """A fresh generic configuration for tests; no downstream deployment defaults."""
+    return yaml.safe_load(resources.files("heralding").joinpath("heralding.yml").read_text())

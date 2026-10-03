@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-# T-Pot's dist config ships the literal string "None" for unset subject fields.
+# Older configurations may use the literal string "None" for unset subject fields.
 _UNSET = {None, "", "None", "none", "null"}
 
 
@@ -110,7 +110,7 @@ def ensure_cert(pem_path: str, cert_cfg: dict | None, persona_tag: str | None = 
         cfg.get("organizational_unit"),
         cfg.get("common_name", "*"),
         cfg.get("valid_days", 365),
-        cfg.get("serial_number") or None,  # T-Pot's "serial_number: 0" means "pick one"
+        cfg.get("serial_number") or None,  # legacy "serial_number: 0" means "pick one"
     )
     fd = os.open(pem_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as fh:

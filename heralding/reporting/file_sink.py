@@ -7,7 +7,7 @@ from heralding.reporting.hub import Sink
 
 logger = logging.getLogger(__name__)
 
-# Column order is part of the T-Pot contract (logstash csv filter, ewsposter).
+# Column order is part of Heralding's stable public log format.
 # New columns may only be appended at the end.
 AUTH_FIELDS = (
     "timestamp",

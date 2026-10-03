@@ -63,7 +63,7 @@ async def test_overlong_line_is_truncated_not_fatal(serve, sink, caplog):
     assert sum("socket.send()" in rec.getMessage() for rec in caplog.records) == 0
 
 
-async def test_prompts_match_tpot_smoke(serve, sink):
+async def test_default_login_prompts(serve, sink):
     cap = telnet.Telnet(make_options(max_attempts=3))
     host, port = await serve(cap)
     reader, writer = await _connect(host, port)

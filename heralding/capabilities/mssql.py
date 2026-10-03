@@ -16,7 +16,7 @@
 """MSSQL (TDS) capability: PRELOGIN without encryption, LOGIN7 credentials logged, login refused.
 
 Clients that insist on an encrypted login (e.g. ODBC Driver 18 defaults) disconnect after
-PRELOGIN; that limitation is documented in docs/TPOT.md.
+PRELOGIN; TLS-enforced client logins are unsupported.
 """
 
 import logging

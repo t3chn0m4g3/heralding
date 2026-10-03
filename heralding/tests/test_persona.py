@@ -68,13 +68,10 @@ import asyncio  # noqa: E402
 import ftplib  # noqa: E402
 import poplib  # noqa: E402
 
-import yaml  # noqa: E402
-
 from heralding.capabilities import ftp, http, pop3, smtp, ssh  # noqa: E402
 from heralding.capabilities.handlerbase import HandlerBase  # noqa: E402
 from heralding.tests.conftest import make_options  # noqa: E402
 from heralding.tests.test_http import _get  # noqa: E402
-from heralding.tests.test_tpot_compat import FIXTURES  # noqa: E402
 
 
 @pytest.fixture
@@ -96,9 +93,10 @@ async def test_persona_banner_used_when_config_empty(serve, sink, windows_person
     await asyncio.to_thread(run)
 
 
-async def test_explicit_config_wins_for_tpot_fixture(serve, sink, windows_persona):
-    cfg = yaml.safe_load((FIXTURES / "tpot_heralding.yml").read_text())
-    host, port = await serve(pop3.Pop3(cfg["capabilities"]["pop3"]))
+async def test_explicit_banner_overrides_persona(serve, sink, windows_persona):
+    host, port = await serve(
+        pop3.Pop3(make_options(banner="+OK POP3 server ready", max_attempts=3))
+    )
 
     def run():
         client = poplib.POP3(host, port, timeout=5)
@@ -108,7 +106,7 @@ async def test_explicit_config_wins_for_tpot_fixture(serve, sink, windows_person
             client.close()
 
     await asyncio.to_thread(run)
-    cap = ssh.SSH(cfg["capabilities"]["ssh"])
+    cap = ssh.SSH(make_options(banner="SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.8"))
     assert cap.persona_value("banner") == "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.8"
 
 
