@@ -71,3 +71,46 @@ async def test_create_server_read_limit_is_16k(serve, sink):
     w.close()
     await _wait_sessions_zero()
     assert HandlerBase.global_sessions == 0
+
+
+def test_limit_key_groups_ipv6_by_64():
+    from heralding.capabilities.handlerbase import limit_key
+
+    assert limit_key("203.0.113.5") == "203.0.113.5"
+    assert limit_key("::ffff:203.0.113.5") == "203.0.113.5"
+    assert limit_key("2001:db8:1:2::1") == limit_key("2001:db8:1:2:ffff::9") == "2001:db8:1:2::/64"
+    assert limit_key("2001:db8:1:3::1") != limit_key("2001:db8:1:2::1")
+
+
+def test_per_ip_limit_counts_an_ipv6_64_as_one_source(sink, restore_limits):
+    HandlerBase.configure_limits(max_sessions=800, max_sessions_per_ip=2)
+    cap = pop3.Pop3(make_options(max_attempts=3, banner="+OK"))
+    local = ("2001:db8:ffff::1", 110)
+    sessions = [cap.create_session((f"2001:db8:1:2::{i}", 4000 + i), local) for i in (1, 2)]
+    try:
+        assert cap._limit_reached(("2001:db8:1:2::99", 5000))
+        assert not cap._limit_reached(("2001:db8:1:3::1", 5000))
+    finally:
+        for session in sessions:
+            cap.close_session(session)
+    assert HandlerBase.global_sessions == 0
+    assert not HandlerBase.sessions_per_ip
+
+
+async def test_udp_sessions_do_not_use_the_tcp_session_pool(sink, restore_limits):
+    from pyVoIP.SIP import SIPClient
+
+    from heralding.capabilities import sip
+
+    HandlerBase.configure_limits(max_sessions=1, max_sessions_per_ip=1)
+    cap = sip.Sip(make_options())
+    cap.MAX_UDP_SESSIONS = 3
+    data = SIPClient("127.0.0.1", 5060, "a", "b", None, myPort=0).gen_first_response().encode()
+    local = ("127.0.0.1", 5060)
+    try:
+        replies = [cap.process_datagram(data, (f"192.0.2.{i}", 5060), local) for i in range(5)]
+        assert [bool(r) for r in replies] == [True, True, True, False, False]
+        assert HandlerBase.global_sessions == 0
+        assert not cap._limit_reached(("198.51.100.1", 1234))
+    finally:
+        cap.close_datagram_sessions()

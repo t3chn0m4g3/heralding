@@ -43,6 +43,18 @@ _CLIENT_ERRORS = (
 )
 
 
+def limit_key(ip) -> str:
+    """Per-source accounting key: the IPv4 address, or its /64 network for IPv6 (one host
+    usually owns a whole /64, so counting single IPv6 addresses would not limit anyone)."""
+    try:
+        addr = ipaddress.ip_address(normalize_ip(ip))
+    except ValueError:
+        return str(ip)
+    if addr.version == 6:
+        return str(ipaddress.IPv6Network((addr, 64), strict=False))
+    return str(addr)
+
+
 class HandlerBase:
     NAME: str = ""  # stable protocol name in the public log format
     TLS: str | None = None  # "implicit" | "starttls" | None
@@ -113,13 +125,17 @@ class HandlerBase:
             ssl_handshake_timeout=self.timeout if ssl_context else None,
         )
 
-    def create_session(self, address, dest_address):
+    def create_session(self, address, dest_address, counted=True):
+        """counted=False keeps the session out of the shared TCP limits (UDP pseudo-sessions
+        have their own pool, so spoofed datagrams cannot lock out TCP clients)."""
         session = Session(
             address[0], address[1], self.NAME, self.users, dest_address[1], dest_address[0]
         )
+        session.limit_key = limit_key(session.source_ip) if counted else None
         self.sessions[session.id] = session
-        HandlerBase.global_sessions += 1
-        HandlerBase.sessions_per_ip[session.source_ip] += 1
+        if counted:
+            HandlerBase.global_sessions += 1
+            HandlerBase.sessions_per_ip[session.limit_key] += 1
         logger.debug(
             "Accepted %s session on %s:%s from %s:%s. (%s)",
             self.NAME,
@@ -134,12 +150,12 @@ class HandlerBase:
     def close_session(self, session):
         logger.debug("Closing session. (%s)", session.id)
         session.end_session()
-        if self.sessions.pop(session.id, None) is not None:
+        key = getattr(session, "limit_key", None)
+        if self.sessions.pop(session.id, None) is not None and key is not None:
             HandlerBase.global_sessions -= 1
-            ip = session.source_ip
-            HandlerBase.sessions_per_ip[ip] -= 1
-            if HandlerBase.sessions_per_ip[ip] <= 0:
-                del HandlerBase.sessions_per_ip[ip]
+            HandlerBase.sessions_per_ip[key] -= 1
+            if HandlerBase.sessions_per_ip[key] <= 0:
+                del HandlerBase.sessions_per_ip[key]
 
     async def execute_capability(self, reader, writer, session):
         raise NotImplementedError
@@ -147,12 +163,14 @@ class HandlerBase:
     def _limit_reached(self, address) -> bool:
         if HandlerBase.global_sessions >= HandlerBase.max_sessions:
             reason = "global session limit"
-        elif (
-            HandlerBase.sessions_per_ip[normalize_ip(address[0])] >= HandlerBase.max_sessions_per_ip
-        ):
+        elif HandlerBase.sessions_per_ip[limit_key(address[0])] >= HandlerBase.max_sessions_per_ip:
             reason = "per-ip session limit"
         else:
             return False
+        self._warn_limit(address, reason)
+        return True
+
+    def _warn_limit(self, address, reason):
         now = time.monotonic()
         if now - HandlerBase._last_limit_warn > _WARN_INTERVAL:
             HandlerBase._last_limit_warn = now
@@ -163,7 +181,6 @@ class HandlerBase:
                 address[1],
                 reason,
             )
-        return True
 
     async def handle_session(self, reader, writer):
         address = writer.get_extra_info("peername") or ("0.0.0.0", 0)
@@ -222,6 +239,7 @@ class DatagramHandlerBase(HandlerBase):
     REFILL_PER_SECOND = 5.0
     MAX_SOURCES = 4096
     MAX_REPLY_RATIO = 3  # reply bytes <= ratio * request bytes
+    MAX_UDP_SESSIONS = 512  # own pool per capability, outside the shared TCP limits
     GLOBAL_BUCKET_SIZE = 200
     GLOBAL_REFILL_PER_SECOND = 100.0
 
@@ -252,6 +270,7 @@ class DatagramHandlerBase(HandlerBase):
         )
 
     def _allow(self, source_ip: str) -> bool:
+        source_ip = limit_key(source_ip)
         now = time.monotonic()
         tokens, last = self._buckets.get(source_ip, (float(self.BUCKET_SIZE), now))
         tokens = min(self.BUCKET_SIZE, tokens + (now - last) * self.REFILL_PER_SECOND)
@@ -284,9 +303,10 @@ class DatagramHandlerBase(HandlerBase):
         key = (tuple(addr[:2]), tuple(local_addr[:2]))
         session = self._udp_sessions.get(key)
         if session is None:
-            if self._limit_reached(addr):
+            if len(self._udp_sessions) >= self.MAX_UDP_SESSIONS:
+                self._warn_limit(addr, "udp session limit")
                 return None
-            session = self.create_session(addr, local_addr)
+            session = self.create_session(addr, local_addr, counted=False)
             self._udp_sessions[key] = session
         old_handle = self._idle_handles.pop(key, None)
         if old_handle is not None:

@@ -1,9 +1,9 @@
 # will request and log the public ip every hours from ipify
 public_ip_as_destination_ip: false
 
-# ip address(es) to listen on; a list binds several, e.g. for IPv4 + IPv6:
-#   bind_host: ["0.0.0.0", "::"]
-bind_host: 0.0.0.0
+# ip address(es) to listen on; a list binds several. The default listens on IPv4 and IPv6;
+# without IPv6 on the host the "::" entry is skipped with a warning. IPv4 only: 0.0.0.0
+bind_host: ["0.0.0.0", "::"]
 
 # system profile the honeypot presents (banners, versions, host names, certificate subjects).
 # "random" picks one of the profiles in heralding/personas.yml once and keeps it in persona.state
@@ -12,7 +12,8 @@ bind_host: 0.0.0.0
 # Any banner set explicitly below overrides the persona for that capability.
 persona: random
 
-# connection limits: new connections beyond these are closed immediately
+# connection limits: new connections beyond these are closed immediately; the per-ip limit
+# counts an IPv6 /64 as one source
 max_sessions: 800
 max_sessions_per_ip: 50
 

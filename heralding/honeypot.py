@@ -29,6 +29,30 @@ from heralding.reporting.hub import get_hub
 logger = logging.getLogger(__name__)
 
 
+def _can_bind(host) -> bool:
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+            probe.bind((host, 0))
+        return True
+    except OSError:
+        return False
+
+
+def usable_bind_hosts(bind_host):
+    """Drop IPv6 entries when the host has no IPv6 (e.g. a container on an IPv4-only
+    network), so the dual-stack default still starts there. A list made of IPv6 entries
+    only is left alone and fails with the usual bind error."""
+    hosts = bind_host if isinstance(bind_host, list) else [bind_host]
+    usable = [h for h in hosts if ":" not in str(h) or _can_bind(h)]
+    if not usable or usable == hosts:
+        return bind_host
+    logger.warning(
+        "IPv6 is not available here, not listening on %s",
+        ", ".join(str(h) for h in hosts if h not in usable),
+    )
+    return usable if len(usable) > 1 else usable[0]
+
+
 class Honeypot:
     public_ip = ""
     wordlist = None
@@ -115,7 +139,7 @@ class Honeypot:
         if self.config["hash_cracker"]["enabled"]:
             self.setup_wordlist()
 
-        bind_host = self.config["bind_host"]
+        bind_host = usable_bind_hosts(self.config["bind_host"])
         listen_ports = []
         for cap_name, cls in HandlerBase.registry().items():
             cap_cfg = self.config["capabilities"].get(cap_name)

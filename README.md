@@ -54,8 +54,10 @@ that capability.
 
 ## IPv6
 
-`bind_host` accepts a list, for example `["0.0.0.0", "::"]`. `"::"` alone listens on IPv6 only.
-Addresses are logged without the `::ffff:` prefix.
+Heralding listens on IPv4 and IPv6 by default (`bind_host: ["0.0.0.0", "::"]`). Without IPv6 on the
+host, for example in a container on an IPv4-only network, the `"::"` entry is skipped with a warning.
+Use `bind_host: 0.0.0.0` for IPv4 only; `"::"` alone listens on IPv6 only. Addresses are logged
+without the `::ffff:` prefix. The per-source session limit counts an IPv6 /64 as one source.
 
 ## Viewing the collected data
 

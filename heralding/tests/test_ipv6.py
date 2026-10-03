@@ -83,3 +83,24 @@ async def test_udp_endpoint_on_ipv6_is_v6only(sink):
         if ipv4_transport is not None:
             ipv4_transport.close()
         transport.close()
+
+
+def test_ipv6_entries_are_skipped_when_the_host_has_no_ipv6(monkeypatch, caplog):
+    from heralding import honeypot
+
+    monkeypatch.setattr(honeypot, "_can_bind", lambda host: False)
+    assert honeypot.usable_bind_hosts(["0.0.0.0", "::"]) == "0.0.0.0"
+    assert "not listening on ::" in caplog.text
+    assert honeypot.usable_bind_hosts("::") == "::"  # nothing left: keep it and fail loudly
+    assert honeypot.usable_bind_hosts("0.0.0.0") == "0.0.0.0"
+    monkeypatch.setattr(honeypot, "_can_bind", lambda host: True)
+    assert honeypot.usable_bind_hosts(["0.0.0.0", "::"]) == ["0.0.0.0", "::"]
+
+
+def test_default_config_is_dual_stack():
+    import importlib.resources
+
+    import yaml
+
+    text = importlib.resources.files("heralding").joinpath("heralding.yml").read_text()
+    assert yaml.safe_load(text)["bind_host"] == ["0.0.0.0", "::"]
