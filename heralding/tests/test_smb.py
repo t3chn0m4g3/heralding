@@ -46,3 +46,29 @@ async def test_standard_client_login_is_refused_and_material_logged(
     ended = await asyncio.to_thread(sink.wait_for_session_end, 1)
     assert ended[0]["auxiliary_data"]["domain"] == "CORP"
     assert ended[0]["auth_attempts"][0]["method"] == ("ntlmv2" if level >= 3 else "ntlmv1")
+
+
+@pytest.mark.parametrize(
+    ("name", "algorithm"), [("windows-server-2022", 2), ("windows-server-2019", None)]
+)
+async def test_signing_context_is_answered_like_the_windows_version(serve, sink, name, algorithm):
+    import random
+
+    from heralding.capabilities.handlerbase import HandlerBase
+    from heralding.misc.persona import select_persona
+
+    HandlerBase.set_persona(select_persona({"persona": name}, random.Random(2)))
+    try:
+        host, port = await serve(Smb(make_options()))
+
+        def negotiate():
+            connection = Connection(uuid.uuid4(), host, port=port, require_signing=False)
+            try:
+                connection.connect(timeout=5)
+                return connection.dialect, connection.signing_algorithm_id
+            finally:
+                connection.disconnect()
+
+        assert await asyncio.to_thread(negotiate) == (0x0311, algorithm)  # 2 = AES-GMAC
+    finally:
+        HandlerBase.set_persona(None)

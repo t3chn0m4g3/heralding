@@ -17,12 +17,16 @@ MAX_MESSAGE = 65536
 MORE_PROCESSING = 0xC0000016
 LOGIN_FAILURE = 0xC000006D
 NOT_SUPPORTED = 0xC00000BB
+INVALID_PARAMETER = 0xC000000D
 SMB2 = b"\xfeSMB"
 DIALECTS = (0x0202, 0x0210, 0x0300, 0x0302, 0x0311)
 PREAUTH_INTEGRITY = 0x0001
 ENCRYPTION = 0x0002
 SHA512 = 0x0001
 CIPHER_PREFERENCE = (0x0002, 0x0001, 0x0004, 0x0003)  # AES-128-GCM first, as Windows
+SIGNING_CAPABILITIES = 0x0008
+SIGNING_PREFERENCE = (0x0002, 0x0001, 0x0000)  # AES-GMAC, AES-CMAC, HMAC-SHA256
+SIGNING_CONTEXT_BUILD = 20348  # Windows Server 2022 is the first to answer it
 
 
 def _negotiate_contexts(request):
@@ -55,8 +59,15 @@ def _ids(data, count_at=0, first_at=None):
     return struct.unpack_from(f"<{count}H", data, first)
 
 
+def _answers_signing_context():
+    persona = HandlerBase.persona
+    build = ntlm.parse_version(persona.os_version)[2] if persona and persona.os_version else 0
+    return build >= SIGNING_CONTEXT_BUILD
+
+
 def _server_contexts(client):
-    """Preauth integrity (SHA-512 with a fresh salt) and, when offered, one cipher."""
+    """Preauth integrity (SHA-512 with a fresh salt), one cipher and, on Server 2022, one
+    signing algorithm, each when offered."""
     # preauth data: hash count, salt length, hash ids, salt
     if SHA512 not in _ids(client.get(PREAUTH_INTEGRITY, b""), 0, 4):
         raise ValueError("SMB 3.1.1 client without SHA-512 preauth integrity")
@@ -66,6 +77,11 @@ def _server_contexts(client):
         ciphers = _ids(client[ENCRYPTION])
         chosen = next((c for c in CIPHER_PREFERENCE if c in ciphers), 0)
         contexts.append(_context(ENCRYPTION, struct.pack("<HH", 1, chosen)))
+    if SIGNING_CAPABILITIES in client and _answers_signing_context():
+        offered = _ids(client[SIGNING_CAPABILITIES])
+        chosen = next((a for a in SIGNING_PREFERENCE if a in offered), None)
+        if chosen is not None:
+            contexts.append(_context(SIGNING_CAPABILITIES, struct.pack("<HH", 1, chosen)))
     return contexts
 
 
@@ -134,7 +150,10 @@ class Smb(HandlerBase):
             if not supported:
                 return _response(request, 0, struct.pack("<HBBI", 9, 0, 0, 0), NOT_SUPPORTED)
             dialect = max(supported)
-        contexts = _server_contexts(_negotiate_contexts(request)) if dialect == 0x0311 else []
+        try:
+            contexts = _server_contexts(_negotiate_contexts(request)) if dialect == 0x0311 else []
+        except ValueError:  # malformed or without SHA-512: Windows answers, it does not hang up
+            return _response(request, 0, struct.pack("<HBBI", 9, 0, 0, 0), INVALID_PARAMETER)
         token = ntlm.initial_token()
         filetime = int((time.time() + 11644473600) * 10000000)
         # negotiate contexts follow the security buffer, 8-byte aligned (offsets from header)
