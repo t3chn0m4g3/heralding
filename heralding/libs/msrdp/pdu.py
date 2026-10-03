@@ -60,7 +60,8 @@ class x224ConnectionConfirmPDU:
             selectedProto = 2 if self.reqProto & 2 else self.reqProto & PROTOCOL_SSL
             self.selected_protocol = selectedProto
             proto_bytes = Uint32LE.pack(selectedProto)
-            nego_res = b"\x02\x00\x08\x00" + proto_bytes
+            # We accept extended GCC client blocks (and ignore unknown blocks).
+            nego_res = b"\x02\x01\x08\x00" + proto_bytes
 
             # send NegoFail when a non-TLS method is requested
             if selectedProto not in (PROTOCOL_SSL, 2):
@@ -143,8 +144,15 @@ class MCSConnectResponsePDU:
 
 
 class MCSAttachUserConfirmPDU:
+    def __init__(self, channel_count=0):
+        # Global I/O is 1003; static channels occupy 1004..1003+count.
+        # A fixed user ID of 1007 aliases a static channel for count >= 4.
+        if not 0 <= channel_count <= 31:
+            raise ValueError("invalid RDP channel count")
+        self.user_channel_id = 1004 + channel_count
+
     def generate(self):
-        return b"\x2e\x00\x00\x06"
+        return b"\x2e\x00" + Uint16BE.pack(self.user_channel_id - 1001)
 
     # This is full static but just to be sillimar to other methods
     def getFullPacket(self):

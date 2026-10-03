@@ -151,11 +151,19 @@ class RDP(HandlerBase):
                 raise InvalidExpectedData("Expected Attach User Request")
             logger.debug("Received: Attach User request : " + repr(data))
 
-            mcs_usrcnf = MCSAttachUserConfirmPDU().getFullPacket()
+            attach_confirm = MCSAttachUserConfirmPDU(channel_count)
+            session.set_auxiliary_data(
+                {
+                    "rdp_static_channel_count": channel_count,
+                    "rdp_user_channel_id": attach_confirm.user_channel_id,
+                }
+            )
+            mcs_usrcnf = attach_confirm.getFullPacket()
             await self.send_data(writer, mcs_usrcnf, tls_obj)
             logger.debug("Sent: Attach User Confirm")
 
             # Handle multiple Channel Join request PUDs
+            joined = set()
             for _ in range(channel_count + 3):
                 phase = "mcs-channel-join"
                 # data = await reader.read(2048)
@@ -166,14 +174,29 @@ class RDP(HandlerBase):
                 channel_req = MCSChannelJoinRequestPDU()
                 v = channel_req.parse(data)
                 if v < 0:
+                    session.set_auxiliary_data({"rdp_next_mcs_type": data[7] >> 2})
                     break
                 channel_id = channel_req.channelID
                 channel_init = channel_req.initiator
+                expected = {
+                    1003,
+                    attach_confirm.user_channel_id,
+                    *range(1004, 1004 + channel_count),
+                }
+                if (
+                    channel_id not in expected
+                    or channel_init + 1001 != attach_confirm.user_channel_id
+                ):
+                    raise InvalidExpectedData("Invalid MCS channel join")
+                if channel_id in joined:
+                    raise InvalidExpectedData("Duplicate MCS channel join")
+                joined.add(channel_id)
                 channel_cnf = MCSChannelJoinConfirmPDU(channel_init, channel_id).getFullPacket()
 
                 await self.send_data(writer, channel_cnf, tls_obj)
                 logger.debug(f"Sent: MCS Channel Join Confirm of channel {channel_id}")
 
+            session.set_auxiliary_data({"rdp_joined_channel_ids": sorted(joined)})
             # Handle Client Security Exchange PDU
             if not data:
                 data = await self.recv_next_tpkt(reader, tls_obj)

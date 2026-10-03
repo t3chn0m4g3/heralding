@@ -328,6 +328,8 @@ capabilities:
     port: 3389
     timeout: 30
     protocol_specific_data:
+      # RDP defaults to TLS <= 1.2 for native-client interoperability.
+      # Set tls_max_version: TLSv1_3 to explicitly enable TLS 1.3.
       banner: ""
       # if a .pem file is not found in work dir, a new pem file will be created
       # using these values

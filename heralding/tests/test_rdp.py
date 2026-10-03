@@ -42,6 +42,24 @@ def test_tls_server_data_has_no_proprietary_rsa_material():
     assert struct.unpack_from("<4H", blocks[0x0C03], 8) == (1004, 1005, 1006, 1007)
 
 
+@pytest.mark.parametrize("channel_count", [0, 1, 3, 4, 8, 31])
+def test_user_channel_does_not_alias_static_or_io_channels(channel_count):
+    from heralding.libs.msrdp.pdu import MCSAttachUserConfirmPDU
+
+    confirmation = MCSAttachUserConfirmPDU(channel_count)
+    assert confirmation.user_channel_id not in {1003, *range(1004, 1004 + channel_count)}
+    # Inspect only our server response; complete client flows use FreeRDP.
+    assert int.from_bytes(confirmation.generate()[2:], "big") + 1001 == confirmation.user_channel_id
+
+
+@pytest.mark.parametrize("channel_count", [-1, 32])
+def test_attach_confirm_rejects_invalid_channel_counts(channel_count):
+    from heralding.libs.msrdp.pdu import MCSAttachUserConfirmPDU
+
+    with pytest.raises(ValueError):
+        MCSAttachUserConfirmPDU(channel_count)
+
+
 @pytest.mark.parametrize("length", [0, 1, 127, 128, 255, 4096, 32767])
 def test_per_length_scalar_reader(length):
     from heralding.libs.msrdp.parser import read_per_length
@@ -52,7 +70,8 @@ def test_per_length_scalar_reader(length):
     assert read_per_length(encoded, 0) == (length, len(encoded))
 
 
-async def test_rdp_optional_tls_ceiling(tmp_path, monkeypatch, sink):
+@pytest.mark.parametrize("maximum", [None, "TLSv1_2", "TLSv1_3"])
+async def test_rdp_tls_ceiling_default_and_explicit_override(tmp_path, monkeypatch, sink, maximum):
     import ssl
 
     from heralding.honeypot import Honeypot
@@ -62,12 +81,15 @@ async def test_rdp_optional_tls_ceiling(tmp_path, monkeypatch, sink):
     config = load_default_config()
     cap = config["capabilities"]["rdp"]
     cap["port"] = 0
-    cap["protocol_specific_data"]["tls_max_version"] = "TLSv1_2"
+    if maximum:
+        cap["protocol_specific_data"]["tls_max_version"] = maximum
     config["capabilities"] = {"rdp": cap}
     honeypot = Honeypot(config)
     try:
         await honeypot.start()
-        assert honeypot._capabilities[0].tls_context.maximum_version == ssl.TLSVersion.TLSv1_2
+        assert honeypot._capabilities[0].tls_context.maximum_version == getattr(
+            ssl.TLSVersion, maximum or "TLSv1_2"
+        )
     finally:
         await honeypot.stop()
         from heralding.capabilities.handlerbase import HandlerBase

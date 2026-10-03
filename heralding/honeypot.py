@@ -146,11 +146,21 @@ class Honeypot:
                             pem_file, cap.persona_value("tls_min_version", "TLSv1")
                         )
                     cap.tls_context.set_ciphers("DEFAULT:@SECLEVEL=0")
-                    maximum = psd.get("tls_max_version")
-                    if maximum:
-                        from heralding.misc.tls import maximum_version
+                    # RDP client implementations do not all support CredSSP
+                    # over TLS 1.3. Use TLS 1.2 unless explicitly configured.
+                    from heralding.misc.tls import maximum_version
 
-                        cap.tls_context.maximum_version = maximum_version(maximum)
+                    maximum = psd.get("tls_max_version")
+                    cap.tls_context.maximum_version = (
+                        maximum_version(maximum)
+                        if maximum
+                        else max(ssl.TLSVersion.TLSv1_2, cap.tls_context.minimum_version)
+                    )
+                    logger.info(
+                        "RDP TLS versions: %s through %s",
+                        cap.tls_context.minimum_version.name,
+                        cap.tls_context.maximum_version.name,
+                    )
             if cls.TLS == "starttls" or getattr(cls, "OFFER_AUTH_TLS", False):
                 self._attach_starttls(cap, cap_name, cap_cfg)
             try:
