@@ -51,7 +51,13 @@ def parse_version(text):
         return 6, 1, 0
 
 
-def challenge_message(challenge, hostname, domain, fqdn, *, signing=False, version=(6, 1, 0)):
+# signing, sealing and key exchange are granted when the client asks for them, as Windows does
+ECHOED_FLAGS = 0x40000030
+
+
+def challenge_message(
+    challenge, hostname, domain, fqdn, *, signing=False, version=(6, 1, 0), client_flags=0
+):
     nb_domain = netbios_domain(domain)
     target = nb_domain.encode("utf-16-le")
     av = b""
@@ -64,8 +70,9 @@ def challenge_message(challenge, hostname, domain, fqdn, *, signing=False, versi
     av += struct.pack("<HH", 0, 0)
     # Unicode, NTLM, extended security, domain target, target info, version, 128/56-bit
     flags = 0xA2898205
+    flags |= client_flags & ECHOED_FLAGS
     if signing:
-        flags |= 0x40000030  # key exchange, signing and sealing for CredSSP
+        flags |= ECHOED_FLAGS  # CredSSP always needs them
     major, minor, build = version
     return (
         SIGNATURE
@@ -86,7 +93,11 @@ def challenge_token(client_token, challenge, persona, *, signing=False):
     domain = persona.domain if persona else "WORKGROUP"
     fqdn = persona.fqdn if persona else "server.local"
     version = parse_version(persona.os_version if persona else "")
-    reply = challenge_message(challenge, host, domain, fqdn, signing=signing, version=version)
+    negotiate = extract_message(client_token)
+    client_flags = struct.unpack_from("<I", negotiate, 12)[0] if len(negotiate) >= 16 else 0
+    reply = challenge_message(
+        challenge, host, domain, fqdn, signing=signing, version=version, client_flags=client_flags
+    )
     return reply if client_token.startswith(SIGNATURE) else response_token(reply)
 
 
