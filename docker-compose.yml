@@ -1,0 +1,54 @@
+# Standalone deployment: docker compose up --build -d
+services:
+  heralding:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: heralding:local
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    stop_grace_period: 30s
+    volumes:
+      - heralding-logs:/var/log/heralding
+      # The image initializes this directory with ownership for its non-root user.
+      - heralding-state:/tmp/heralding
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    ports:
+      - "21:21"
+      - "22:22"
+      - "23:23"
+      - "25:25"
+      - "80:80"
+      - "110:110"
+      - "143:143"
+      - "389:389"
+      - "443:443"
+      - "445:445"
+      - "465:465"
+      - "587:587"
+      - "636:636"
+      - "990:990"
+      - "993:993"
+      - "995:995"
+      - "1080:1080"
+      - "1433:1433"
+      - "1883:1883"
+      - "3306:3306"
+      - "3389:3389"
+      - "5060:5060"
+      - "5060:5060/udp"
+      - "5432:5432"
+      - "5900:5900"
+      - "6379:6379"
+      - "8080:8080"
+      - "8883:8883"
+
+volumes:
+  heralding-logs:
+  heralding-state:

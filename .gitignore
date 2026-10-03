@@ -69,6 +69,5 @@ htmlcov/
 /docs/
 
 # Local standalone deployment configuration
-/.env
-/compose.override.yaml
+/docker-compose.override.yml
 /heralding.local.yml

@@ -165,26 +165,19 @@ docker compose logs -f heralding
 docker compose exec heralding tail -f /var/log/heralding/log_auth.csv
 ```
 
-[compose.yaml](compose.yaml) builds the local Dockerfile and publishes all 27 capabilities,
+[docker-compose.yml](docker-compose.yml) builds the local Dockerfile and publishes all 27 capabilities,
 including SIP over TCP and UDP. The service runs as the image's non-root user with a
 read-only root filesystem. Docker-managed volumes keep logs, certificates, the SSH host
 key and `persona.state` across container recreation; host directories and ownership
 changes are not needed. `docker compose down` retains these volumes; `down -v` deletes them.
 
-Host ports below 1024 are mapped to higher ports by default, including FTP 2121, SSH 2222,
-HTTP 8080 and HTTPS 8443. RDP uses 3389. See the Compose file for every mapping.
-If a port is occupied, set the corresponding `HERALDING_<PROTOCOL>_PORT` variable:
+Each service uses its standard host port, for example `21:21` for FTP and `22:22`
+for SSH. SIP publishes both TCP and UDP on port 5060. To change a host port, edit
+the left side of its mapping in `docker-compose.yml`, for example `2222:22`.
 
-```shell
-HERALDING_SSH_PORT=2223 HERALDING_RDP_PORT=13389 docker compose up --build -d
-```
-
-Variables can also go in a local `.env` file, which Git ignores. `HERALDING_BIND_ADDRESS`
-defaults to `0.0.0.0`; set it to `127.0.0.1` for local access. Ports can be mapped back to
-their standard values on a dedicated host, for example `HERALDING_SSH_PORT=22`.
 The image's default configuration is used. To customize capabilities, copy it with
 `docker compose cp heralding:/etc/heralding/heralding.yml ./heralding.local.yml`, edit it,
-then create an ignored `compose.override.yaml`:
+then create an ignored `docker-compose.override.yml`:
 
 ```yaml
 services:
