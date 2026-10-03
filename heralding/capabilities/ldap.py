@@ -162,17 +162,8 @@ class Ldap(HandlerBase):
         message = ntlm.extract_message(token)
         kind = struct.unpack_from("<I", message, 8)[0]
         if kind == 1:
-            persona = HandlerBase.persona
             state["challenge"] = secrets.token_bytes(8)
-            challenge = ntlm.challenge_message(
-                state["challenge"],
-                persona.netbios or persona.hostname,
-                persona.domain,
-                persona.fqdn,
-                version=ntlm.parse_version(persona.os_version),
-            )
-            # SPNEGO-wrapped requests get a wrapped answer, raw NTLM a raw one
-            return challenge if token.startswith(ntlm.SIGNATURE) else ntlm.response_token(challenge)
+            return ntlm.challenge_token(token, state["challenge"], HandlerBase.persona)
         if kind == 3 and state["challenge"] is not None:
             username, domain, workstation, method, password_hash = ntlm.authenticate(
                 message, state["challenge"]

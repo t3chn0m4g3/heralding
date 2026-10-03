@@ -79,6 +79,17 @@ def challenge_message(challenge, hostname, domain, fqdn, *, signing=False, versi
     )
 
 
+def challenge_token(client_token, challenge, persona, *, signing=False):
+    """The server's answer to a client NEGOTIATE for the persona's host, wrapped in SPNEGO
+    when the client wrapped its own token, raw NTLM otherwise."""
+    host = (persona.netbios or persona.hostname) if persona else "SERVER"
+    domain = persona.domain if persona else "WORKGROUP"
+    fqdn = persona.fqdn if persona else "server.local"
+    version = parse_version(persona.os_version if persona else "")
+    reply = challenge_message(challenge, host, domain, fqdn, signing=signing, version=version)
+    return reply if client_token.startswith(SIGNATURE) else response_token(reply)
+
+
 def _field(message, position):
     if position + 8 > len(message):
         raise ValueError("short NTLM field")

@@ -69,13 +69,7 @@ async def capture(tls, session, persona=None):
     if struct.unpack_from("<I", message, 8)[0] != 1:
         raise ValueError("expected CredSSP NTLM negotiate")
     challenge = secrets.token_bytes(8)
-    host = persona.netbios or persona.hostname if persona else "SERVER"
-    domain = persona.domain if persona else "WORKGROUP"
-    fqdn = persona.fqdn if persona else "server.local"
-    os_version = ntlm.parse_version(persona.os_version if persona else "")
-    reply = ntlm.challenge_message(challenge, host, domain, fqdn, signing=True, version=os_version)
-    if not token.startswith(ntlm.SIGNATURE):
-        reply = ntlm.response_token(reply)
+    reply = ntlm.challenge_token(token, challenge, persona, signing=True)
     await tls.write_tls(response(version, reply))
     _, token = await read_request(tls)
     username, domain, workstation, method, password_hash = ntlm.authenticate(
