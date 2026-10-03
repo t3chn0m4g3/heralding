@@ -97,8 +97,21 @@ def load_config(config_file):
         return yaml.safe_load(_file.read())
 
 
+def loop_exception_handler(loop, context):
+    """A peer that vanished while a library callback ran (e.g. asyncssh setting socket options
+    on a reset connection) is a client error: debug log only, no traceback."""
+    exc = context.get("exception")
+    if isinstance(exc, OSError | EOFError):
+        logger.debug(
+            "Client error in event loop callback [%s] %s", type(exc).__name__, exc, exc_info=exc
+        )
+        return
+    loop.default_exception_handler(context)
+
+
 async def main_async(config, stop_event: asyncio.Event | None = None) -> None:
     loop = asyncio.get_running_loop()
+    loop.set_exception_handler(loop_exception_handler)
     stop_event = stop_event or asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)

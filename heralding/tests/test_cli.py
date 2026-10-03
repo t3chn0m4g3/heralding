@@ -143,3 +143,20 @@ def test_port_conflict_fails_without_traceback(tmp_path):
     text = log.read_text()
     assert "Could not start" in text
     _assert_clean(text)
+
+
+def test_loop_exception_handler_keeps_client_errors_out_of_the_log(caplog):
+    import asyncio
+    import logging
+
+    from heralding.cli import loop_exception_handler
+
+    loop = asyncio.new_event_loop()
+    try:
+        with caplog.at_level(logging.INFO):
+            loop_exception_handler(loop, {"message": "cb", "exception": OSError(22, "x")})
+            assert not caplog.records
+            loop_exception_handler(loop, {"message": "cb", "exception": RuntimeError("bug")})
+            assert any(r.levelno == logging.ERROR for r in caplog.records)
+    finally:
+        loop.close()
