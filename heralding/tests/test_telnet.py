@@ -178,3 +178,24 @@ async def test_terminal_type_environment_and_window_size_are_recorded(serve, sin
     assert aux["terminal_type"].lower() == "xterm-256color"
     assert aux["window_size"] == "132x43"
     assert aux["environment"].get("TERM", "").lower() == "xterm-256color"
+
+
+def test_option_value_is_requested_once():
+    from heralding.libs.telnetsrv import telnetsrvlib as lib
+
+    class Writer:
+        def __init__(self):
+            self.chunks = []
+
+        def write(self, data):
+            self.chunks.append(data)
+
+        def get_extra_info(self, name):
+            return ("127.0.0.1", 2323)
+
+    writer = Writer()
+    handler = lib.TelnetHandlerBase(None, writer, ("127.0.0.1", 40000))
+    for _ in range(100):  # a client repeating WILL must not grow the output
+        handler._option_received(lib.WILL, lib.TTYPE)
+        handler._option_received(lib.WILL, lib.NEW_ENVIRON)
+    assert len(writer.chunks) == 2

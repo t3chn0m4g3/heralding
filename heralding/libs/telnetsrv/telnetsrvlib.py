@@ -141,6 +141,7 @@ class TelnetHandlerBase(AsyncBaseRequestHandler):
         self.writer = writer
         self.rawq = b""  # Raw input string
         self.sbdataq = b""  # Sub-Neg string
+        self._requested = set()  # options whose value was asked for (SB ... SEND)
         self.eof = 0  # Has EOF been reached?
         self.iacseq = b""  # Buffer for IAC sequence.
         self.sb = 0  # Flag for SB and SE sequence.
@@ -175,7 +176,9 @@ class TelnetHandlerBase(AsyncBaseRequestHandler):
     # ------------------------- Telnet Options Engine --------------------------
 
     def _option_received(self, cmd, opt):
-        if cmd == WILL and opt in self.SEND_REQUESTS:
+        # ask once per option, as a real telnetd does after its own DO
+        if cmd == WILL and opt in self.SEND_REQUESTS and opt not in self._requested:
+            self._requested.add(opt)
             self.writer.write(IAC + SB + opt + SEND + IAC + SE)
 
     def _subnegotiation_received(self, data):
