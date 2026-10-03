@@ -13,141 +13,215 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import struct
+import asyncio
 import logging
+import struct
 
 from heralding.capabilities.handlerbase import HandlerBase
-from heralding.libs.msrdp.pdu import x224ConnectionConfirmPDU, MCSConnectResponsePDU, MCSAttachUserConfirmPDU, MCSChannelJoinConfirmPDU
-from heralding.libs.msrdp.parser import x224ConnectionRequestPDU, MCSChannelJoinRequestPDU, ClientInfoPDU
-from heralding.libs.msrdp.parser import ErectDomainRequestPDU, tpktPDUParser
-from heralding.libs.msrdp.security import ServerSecurity
-from heralding.libs.msrdp.parser import InvalidExpectedData
+from heralding.libs.msrdp import credssp
+from heralding.libs.msrdp.parser import (
+    AttachUserRequestPDU,
+    ClientInfoPDU,
+    ErectDomainRequestPDU,
+    InvalidExpectedData,
+    MCSChannelJoinRequestPDU,
+    client_channel_count,
+    tpktPDUParser,
+    x224ConnectionRequestPDU,
+)
+from heralding.libs.msrdp.pdu import (
+    MCSAttachUserConfirmPDU,
+    MCSChannelJoinConfirmPDU,
+    MCSConnectResponsePDU,
+    x224ConnectionConfirmPDU,
+)
 from heralding.libs.msrdp.tls import TLS, TLSHandshakeError
+
 logger = logging.getLogger(__name__)
 
 
 class RDP(HandlerBase):
-  # will parse the TPKT header and read the entire packet (TPKT + payload)
-  async def recv_next_tpkt(self, reader, tlsObj=None):
-    # data buffer
-    data = b""
-    if tlsObj:
-      # read TPKT header
-      data += await tlsObj.read_tls(4)
-      tpkt = tpktPDUParser()
-      tpkt.parse(data)
-      # calculate the remaining bytes we need to read
-      read_len = tpkt.length - 4
-      # read remaining byets
-      data += await tlsObj.read_tls(read_len)
-    else:
-      data = await reader.read(2048)
+    NAME = "rdp"
+    NEEDS_CERT = True  # TLS is negotiated inside the RDP flow (libs/msrdp/tls.py)
+    tls_context = None  # loaded once by Honeypot.start(), survives removal of the PEM
 
-    return data
+    # will parse the TPKT header and read the entire packet (TPKT + payload)
+    async def recv_next_tpkt(self, reader, tlsObj=None):
+        # data buffer
+        data = b""
+        if tlsObj:
+            # read TPKT header
+            data += await tlsObj.read_tls(4)
+            tpkt = tpktPDUParser()
+            tpkt.parse(data)
+            # calculate the remaining bytes we need to read
+            read_len = tpkt.length - 4
+            # read remaining byets
+            data += await tlsObj.read_tls(read_len)
+        else:
+            data = await reader.readexactly(4)
+            tpkt = tpktPDUParser()
+            tpkt.parse(data)
+            data += await reader.readexactly(tpkt.length - 4)
 
-  async def send_data(self, writer, data, tlsObj=None):
-    if tlsObj:
-      await tlsObj.write_tls(data)
-      return
-    writer.write(data)
-    await writer.drain()
+        return data
 
-  async def execute_capability(self, reader, writer, session):
-    try:
-      await self._handle_session(reader, writer, session)
-    except struct.error as exc:
-      logger.debug('RDP connection error: %s', exc)
-      session.end_session()
+    async def send_data(self, writer, data, tlsObj=None):
+        if tlsObj:
+            await tlsObj.write_tls(data)
+            return
+        writer.write(data)
+        await writer.drain()
 
-  async def _handle_session(self, reader, writer, session):
-    try:
-      data = await self.recv_next_tpkt(reader)
-      cr_pdu = x224ConnectionRequestPDU()
-      cr_pdu.parse(data)
+    async def execute_capability(self, reader, writer, session):
+        try:
+            await self._handle_session(reader, writer, session)
+        except struct.error as exc:
+            logger.debug("RDP connection error: %s", exc)
+            session.end_session()
 
-      client_reqProto = 1  # set default to tls
-      if cr_pdu.reqProtocols:
-        client_reqProto = cr_pdu.reqProtocols
-      else:
-        # if no nego request was made, then it is rdp security
-        client_reqProto = 0
+    async def _handle_session(self, reader, writer, session):
+        phase = "x224-negotiation"
+        try:
+            data = await self.recv_next_tpkt(reader)
+            cr_pdu = x224ConnectionRequestPDU()
+            cr_pdu.parse(data)
+            session.set_auxiliary_data({"rdp_requested_protocols": cr_pdu.reqProtocols or 0})
 
-      cc_pdu_obj = x224ConnectionConfirmPDU(client_reqProto)
-      cc_pdu = cc_pdu_obj.getFullPacket()
-      await self.send_data(writer, cc_pdu)
-      if cc_pdu_obj.sentNegoFail:
-        logger.debug("Sent x224 RDP Negotiation Failure PDU")
-        session.end_session()
-        return
-      logger.debug("Sent x244CLinetConnectionConfirm PDU")
+            client_reqProto = 1  # set default to tls
+            if cr_pdu.reqProtocols:
+                client_reqProto = cr_pdu.reqProtocols
+            else:
+                # if no nego request was made, then it is rdp security
+                client_reqProto = 0
 
-      # TLS Upgrade start
-      logger.debug("RDP TLS initilization")
-      tls_obj = TLS(writer, reader, 'rdp.pem')
-      await tls_obj.do_tls_handshake()
+            cc_pdu_obj = x224ConnectionConfirmPDU(client_reqProto)
+            cc_pdu = cc_pdu_obj.getFullPacket()
+            session.set_auxiliary_data(
+                {
+                    "rdp_selected_protocol": cc_pdu_obj.selected_protocol,
+                    "rdp_security": "nla" if cc_pdu_obj.selected_protocol == 2 else "tls",
+                }
+            )
+            await self.send_data(writer, cc_pdu)
+            if cc_pdu_obj.sentNegoFail:
+                logger.debug("Sent x224 RDP Negotiation Failure PDU")
+                session.end_session()
+                return
+            logger.debug("Sent x244CLinetConnectionConfirm PDU")
 
-      # Now using send_data and recv_next_tpkt
-      data = await self.recv_next_tpkt(reader, tls_obj)
+            # TLS Upgrade start
+            logger.debug("RDP TLS initilization")
+            if self.tls_context is None:
+                logger.warning("RDP TLS context is not initialized")
+                return
+            tls_obj = TLS(writer, reader, context=self.tls_context)
+            phase = "tls-handshake"
+            await tls_obj.do_tls_handshake()
+            session.set_auxiliary_data({"tls_version": tls_obj.version})
 
-      # This packet includes ServerSecurity data
-      server_sec = ServerSecurity()
-      mcs_cres = MCSConnectResponsePDU(client_reqProto,
-                                       server_sec).getFullPacket()
-      await self.send_data(writer, mcs_cres, tls_obj)
+            if cc_pdu_obj.selected_protocol == 2:
+                phase = "credssp-negotiate"
+                await credssp.capture(tls_obj, session, HandlerBase.persona)
+                return
 
-      data = await self.recv_next_tpkt(reader, tls_obj)
-      if not data:
-        logger.debug("Expected ErectDomainRequest. Got Nothing.")
-        return
-      if not ErectDomainRequestPDU.checkPDU(data):
-        logger.debug("Malformed Packet Received. Expected ErectDomainRequest.")
-        session.end_session()
-        return
+            # Now using send_data and recv_next_tpkt
+            phase = "mcs-connect-initial"
+            data = await self.recv_next_tpkt(reader, tls_obj)
 
-      logger.debug("Received: ErectDomainRequest" + repr(data))
+            channel_count = client_channel_count(data)
+            mcs_cres = MCSConnectResponsePDU(client_reqProto, channel_count).getFullPacket()
+            await self.send_data(writer, mcs_cres, tls_obj)
 
-      data = await self.recv_next_tpkt(reader, tls_obj)
-      logger.debug("Received: Attach User request : " + repr(data))
+            phase = "mcs-erect-domain"
+            data = await self.recv_next_tpkt(reader, tls_obj)
+            if not data:
+                logger.debug("Expected ErectDomainRequest. Got Nothing.")
+                return
+            if not ErectDomainRequestPDU.checkPDU(data):
+                logger.debug("Malformed Packet Received. Expected ErectDomainRequest.")
+                session.end_session()
+                return
 
-      mcs_usrcnf = MCSAttachUserConfirmPDU().getFullPacket()
-      await self.send_data(writer, mcs_usrcnf, tls_obj)
-      logger.debug("Sent: Attach User Confirm")
+            logger.debug("Received: ErectDomainRequest" + repr(data))
 
-      # Handle multiple Channel Join request PUDs
-      for _ in range(7):
-        # data = await reader.read(2048)
-        data = await self.recv_next_tpkt(reader, tls_obj)
-        if not data:
-          logger.debug(
-              "Expected: Channel Join/Client Security Packet.Got Nothing.")
-          return
-        channel_req = MCSChannelJoinRequestPDU()
-        v = channel_req.parse(data)
-        if v < 0:
-          break
-        channel_id = channel_req.channelID
-        channel_init = channel_req.initiator
-        channel_cnf = MCSChannelJoinConfirmPDU(channel_init,
-                                               channel_id).getFullPacket()
+            phase = "mcs-attach-user"
+            data = await self.recv_next_tpkt(reader, tls_obj)
+            if not AttachUserRequestPDU.checkPDU(data):
+                raise InvalidExpectedData("Expected Attach User Request")
+            logger.debug("Received: Attach User request : " + repr(data))
 
-        await self.send_data(writer, channel_cnf, tls_obj)
-        logger.debug("Sent: MCS Channel Join Confirm of channel %s" %
-                     (channel_id))
+            attach_confirm = MCSAttachUserConfirmPDU(channel_count)
+            session.set_auxiliary_data(
+                {
+                    "rdp_static_channel_count": channel_count,
+                    "rdp_user_channel_id": attach_confirm.user_channel_id,
+                }
+            )
+            mcs_usrcnf = attach_confirm.getFullPacket()
+            await self.send_data(writer, mcs_usrcnf, tls_obj)
+            logger.debug("Sent: Attach User Confirm")
 
-      # Handle Client Security Exchange PDU
-      if not data:
-        data = await self.recv_next_tpkt(reader, tls_obj)
+            # Handle multiple Channel Join request PUDs
+            joined = set()
+            for _ in range(channel_count + 3):
+                phase = "mcs-channel-join"
+                # data = await reader.read(2048)
+                data = await self.recv_next_tpkt(reader, tls_obj)
+                if not data:
+                    logger.debug("Expected: Channel Join/Client Security Packet.Got Nothing.")
+                    return
+                channel_req = MCSChannelJoinRequestPDU()
+                v = channel_req.parse(data)
+                if v < 0:
+                    session.set_auxiliary_data({"rdp_next_mcs_type": data[7] >> 2})
+                    break
+                channel_id = channel_req.channelID
+                channel_init = channel_req.initiator
+                expected = {
+                    1003,
+                    attach_confirm.user_channel_id,
+                    *range(1004, 1004 + channel_count),
+                }
+                if (
+                    channel_id not in expected
+                    or channel_init + 1001 != attach_confirm.user_channel_id
+                ):
+                    raise InvalidExpectedData("Invalid MCS channel join")
+                if channel_id in joined:
+                    raise InvalidExpectedData("Duplicate MCS channel join")
+                joined.add(channel_id)
+                channel_cnf = MCSChannelJoinConfirmPDU(channel_init, channel_id).getFullPacket()
 
-      # There is no client security exchange in TLS Security
-      client_info = ClientInfoPDU()
-      client_info.parseTLS(data)
-      username = client_info.rdpUsername
-      password = client_info.rdpPassword
-      session.add_auth_attempt(
-          'plaintext', username=username, password=password)
+                await self.send_data(writer, channel_cnf, tls_obj)
+                logger.debug(f"Sent: MCS Channel Join Confirm of channel {channel_id}")
 
-      session.end_session()
-    except (InvalidExpectedData, TLSHandshakeError):
-      logger.debug("Malformed packet detected. Closing session.")
-      session.end_session()
-      return
+            session.set_auxiliary_data({"rdp_joined_channel_ids": sorted(joined)})
+            # Handle Client Security Exchange PDU
+            if not data:
+                data = await self.recv_next_tpkt(reader, tls_obj)
+
+            # There is no client security exchange in TLS Security
+            client_info = ClientInfoPDU()
+            phase = "client-info"
+            client_info.parseTLS(data)
+            username = client_info.rdpUsername
+            password = client_info.rdpPassword
+            session.set_auxiliary_data(
+                {"domain": client_info.domain, "tls_version": tls_obj.version}
+            )
+            session.add_auth_attempt("plaintext", username=username, password=password)
+
+            session.end_session()
+        except (
+            InvalidExpectedData,
+            TLSHandshakeError,
+            asyncio.IncompleteReadError,
+            ValueError,
+        ) as exc:
+            logger.debug("RDP handshake ended before credential capture: %s", exc)
+            session.set_auxiliary_data(
+                {"rdp_handshake_error": str(exc), "rdp_handshake_phase": phase}
+            )
+            session.end_session()
+            return

@@ -15,13 +15,13 @@
 
 import logging
 
-from heralding.capabilities.handlerbase import HandlerBase
 from heralding.capabilities.imap import Imap
 
 logger = logging.getLogger(__name__)
 
 
-class Imaps(Imap, HandlerBase):
-  """
-    This class will get wrapped in SSL. This is possible because we by convention  wrap
-    all capabilities that ends with the letter 's' in SSL."""
+class Imaps(Imap):
+    """Imap wrapped in implicit TLS (see HandlerBase.TLS)."""
+
+    NAME = "imaps"
+    TLS = "implicit"

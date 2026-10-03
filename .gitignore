@@ -20,7 +20,7 @@ develop-eggs
 pip-log.txt
 
 # Unit test / coverage reports
-.coverage
+.coverage*
 .tox
 
 #Translations
@@ -37,7 +37,7 @@ server.key
 beeswarm.cfg
 
 *.log
-*.key
+/ssh.key
 #pydev
 .project
 .pydevproject
@@ -47,11 +47,23 @@ beeswarm.cfg
 
 *.gz
 
-docs/_build
 .noseids
 admin_passwd_hash
-*.pem
+/*.pem
 *.csv
 
 venv/*
-heralding/heralding.yml
+
+.venv/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+.superpowers/
+
+/*.pem.config
+htmlcov/
+/persona.state
+/*.pem.persona
+
+# Local planning and validation documents
+/docs/

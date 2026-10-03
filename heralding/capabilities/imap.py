@@ -14,166 +14,195 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import base64
-import logging
 import binascii
+import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
 
-CRLF = '\r\n'
+CRLF = "\r\n"
 
 
 class Imap(HandlerBase):
+    NAME = "imap"
 
-  def __init__(self, options):
-    super().__init__(options)
-    self.max_tries = int(self.options['protocol_specific_data']['max_attempts'])
-    self.banner = self.options['protocol_specific_data']['banner']
+    def __init__(self, options):
+        super().__init__(options)
+        self.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
+        self.banner = self.persona_value("banner", "* OK IMAP4rev1 Server Ready")
 
-    self.available_commands = [
-        'authenticate', 'capability', 'login', 'logout', 'noop'
-    ]
-    self.available_mechanisms = ['plain']
+        self.available_commands = ["authenticate", "capability", "login", "logout", "noop"]
+        self.available_mechanisms = ["plain"]
 
-  async def execute_capability(self, reader, writer, session):
-    await self._handle_session(session, reader, writer)
+    async def execute_capability(self, reader, writer, session):
+        await self._handle_session(session, reader, writer)
 
-  async def _handle_session(
-      self,
-      session,
-      reader,
-      writer,
-  ):
-    await self.send_message(writer, self.banner)
+    async def _handle_session(
+        self,
+        session,
+        reader,
+        writer,
+    ):
+        await self.send_message(writer, self.banner)
 
-    state = "Not Authenticated"
-    while state != 'Logout' and session.connected:
-      # An exception is raised inside await reader.readline() in case of
-      # sudden connection reset.
-      raw_msg = await reader.readline()
-      if not raw_msg:
-        break
+        state = "Not Authenticated"
+        while state != "Logout" and session.connected:
+            # An exception is raised inside await reader.readline() in case of
+            # sudden connection reset.
+            raw_msg = await reader.readline()
+            if not raw_msg:
+                break
 
-      raw_msg_str = str(raw_msg, 'utf-8')
+            raw_msg_str = raw_msg.decode("utf-8", "surrogateescape")
+            session.record_command(decode_lossless(raw_msg).rstrip("\r\n"))
 
-      cmd_msg = raw_msg_str.rstrip().split(' ', 2)
-      if len(cmd_msg) == 0:
-        continue
-      elif len(cmd_msg) == 1:
-        await self.send_message(writer, "* BAD invalid command")
-        continue
-      elif len(cmd_msg) == 2:
-        tag = cmd_msg[0]
-        cmd = cmd_msg[1]
-        args = ''
-      else:
-        tag = cmd_msg[0]
-        cmd = cmd_msg[1]
-        args = cmd_msg[2]
+            cmd_msg = raw_msg_str.rstrip("\r\n").split(" ", 2)
+            if len(cmd_msg) == 0:
+                continue
+            elif len(cmd_msg) == 1:
+                await self.send_message(writer, "* BAD invalid command")
+                continue
+            elif len(cmd_msg) == 2:
+                tag = cmd_msg[0]
+                cmd = cmd_msg[1]
+                args = ""
+            else:
+                tag = cmd_msg[0]
+                cmd = cmd_msg[1]
+                args = cmd_msg[2]
 
-      cmd = cmd.lower()
-      if cmd not in self.available_commands:
-        await self.send_message(writer, tag + " BAD invalid command")
-      else:
-        func_to_call = getattr(self, 'cmd_{0}'.format(cmd), None)
-        if func_to_call:
-          return_value = await func_to_call(session, reader, writer, tag, args)
-          state = return_value
+            cmd = cmd.lower()
+            if cmd not in self.available_commands:
+                await self.send_message(writer, tag + " BAD invalid command")
+            else:
+                func_to_call = getattr(self, f"cmd_{cmd}", None)
+                if func_to_call:
+                    return_value = await func_to_call(session, reader, writer, tag, args)
+                    state = return_value
+                else:
+                    await self.send_message(writer, tag + " BAD invalid command")
+        session.end_session()
+
+    async def cmd_authenticate(self, session, reader, writer, tag, args):
+        parts = args.split(None, 1)
+        if not parts:
+            await self.send_message(writer, tag + " BAD invalid command")
+            return "Not Authenticated"
+        auth_mechanism = parts[0].lower()
+        if auth_mechanism not in self.available_mechanisms:
+            await self.send_message(writer, tag + " BAD invalid command")
+            return "Not Authenticated"
+
+        if len(parts) == 2:
+            # SASL-IR (RFC 4959): initial response on the command line, "=" means empty
+            raw_msg = b"" if parts[1] == "=" else parts[1].encode("ascii", "replace")
         else:
-          await self.send_message(writer, tag + " BAD invalid command")
-    session.end_session()
+            # the space after '+' is needed according to RFC
+            await self.send_message(writer, "+ ")
+            raw_msg = (await reader.readline()).rstrip(b"\r\n")
 
-  async def cmd_authenticate(self, session, reader, writer, tag, args):
-    mechanism = args.split()
-    if len(mechanism) == 1:
-      auth_mechanism = mechanism[0].lower()
-    else:
-      await self.send_message(writer, tag + ' BAD invalid command')
-      return "Not Authenticated"
+        if auth_mechanism == "plain":
+            success, credentials = self.try_b64decode(raw_msg, session)
+            # \x00 separates authorization identity, username and password; the
+            # authorization identity is unused here, so exactly two \x00 are expected (RFC 4616)
+            if success and credentials.count(b"\x00") == 2:
+                _, user, password = credentials.split(b"\x00")
+                session.add_auth_attempt(
+                    "plaintext", username=decode_lossless(user), password=decode_lossless(password)
+                )
+                await self.send_message(writer, tag + " NO Authentication failed")
+            else:
+                await self.send_message(writer, tag + " BAD invalid command")
+        self.stop_if_too_many_attempts(session)
+        return "Not Authenticated"
 
-    if auth_mechanism in self.available_mechanisms:
-      # the space after '+' is needed according to RFC
-      await self.send_message(writer, '+ ')
-      raw_msg = await reader.read(512)
+    async def cmd_capability(self, session, reader, writer, tag, args):
+        await self.send_message(writer, "* CAPABILITY IMAP4rev1 AUTH=PLAIN")
+        await self.send_message(writer, tag + " OK CAPABILITY completed")
+        return "Not Authenticated"
 
-      if auth_mechanism == 'plain':
-        success, credentials = self.try_b64decode(raw_msg, session)
-        # \x00 is a separator between authorization identity,
-        # username and password. Authorization identity isn't used in
-        # this auth mechanism, so we must have 2 \x00 symbols.(RFC 4616)
-        if success and credentials.count('\x00') == 2:
-          raw_msg_dec = str(base64.b64decode(raw_msg), 'utf-8')
-          _, user, password = raw_msg_dec.split('\x00')
-          session.add_auth_attempt(
-              'plaintext', username=user, password=password)
-          await self.send_message(writer, tag + ' NO Authentication failed')
-        else:
-          await self.send_message(writer, tag + ' BAD invalid command')
-    else:
-      await self.send_message(writer, tag + ' BAD invalid command')
-    self.stop_if_too_many_attempts(session)
-    return 'Not Authenticated'
+    async def cmd_login(self, session, reader, writer, tag, args):
+        try:
+            values = await self._parse_astrings(reader, writer, args, 2)
+        except ValueError:
+            await self.send_message(writer, tag + " BAD invalid command")
+            return "Not Authenticated"
+        if not values:
+            await self.send_message(writer, tag + " BAD invalid command")
+            return "Not Authenticated"
+        user = values[0]
+        password = values[1] if len(values) > 1 else ""
 
-  async def cmd_capability(self, session, reader, writer, tag, args):
-    await self.send_message(writer, '* CAPABILITY IMAP4rev1 AUTH=PLAIN')
-    await self.send_message(writer, tag + ' OK CAPABILITY completed')
-    return 'Not Authenticated'
+        session.add_auth_attempt("plaintext", username=user, password=password)
+        await self.send_message(writer, tag + " NO Authentication failed")
+        self.stop_if_too_many_attempts(session)
+        return "Not Authenticated"
 
-  async def cmd_login(self, session, reader, writer, tag, args):
-    if args:
-      user_cred = args.split(' ', 1)
-    else:
-      await self.send_message(writer, tag + ' BAD invalid command')
-      return 'Not Authenticated'
+    async def _parse_astrings(self, reader, writer, text, count):
+        """Parse up to `count` IMAP astrings (atom, quoted string or {n} literal)."""
+        values = []
+        rest = text
+        while len(values) < count:
+            rest = rest.lstrip(" ")
+            if not rest:
+                break
+            if rest.startswith('"'):
+                value, rest = self._read_quoted(rest)
+            elif rest.startswith("{") and rest.endswith("}"):
+                size = int(rest[1:-1].rstrip("+"))
+                if not 0 <= size <= 4096:
+                    raise ValueError("literal too large")
+                if not text.endswith("+}"):  # non-synchronising literals need no go-ahead
+                    await self.send_message(writer, "+ ")
+                data = await reader.readexactly(size)
+                value = decode_lossless(data)
+                rest = decode_lossless(await reader.readline()).rstrip("\r\n")
+            else:
+                value, _, rest = rest.partition(" ")
+            values.append(decode_lossless(value.encode("utf-8", "surrogateescape")))
+        return values
 
-    # Delete first and last quote,
-    # because login and password can be sent as quoted strings
-    if len(user_cred) == 1:
-      user = self.strip_quotes(user_cred[0])
-      password = ''
-    else:
-      user = self.strip_quotes(user_cred[0])
-      password = self.strip_quotes(user_cred[1])
+    @staticmethod
+    def _read_quoted(text):
+        out = []
+        i = 1
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                return "".join(out), text[i + 1 :]
+            out.append(ch)
+            i += 1
+        raise ValueError("unterminated quoted string")
 
-    session.add_auth_attempt('plaintext', username=user, password=password)
-    await self.send_message(writer, tag + ' NO Authentication failed')
-    self.stop_if_too_many_attempts(session)
-    return 'Not Authenticated'
+    async def cmd_logout(self, session, reader, writer, tag, args):
+        await self.send_message(writer, "* BYE IMAP4rev1 Server logging out")
+        await self.send_message(writer, tag + " OK LOGOUT completed")
+        return "Logout"
 
-  async def cmd_logout(self, session, reader, writer, tag, args):
-    await self.send_message(writer, '* BYE IMAP4rev1 Server logging out')
-    await self.send_message(writer, tag + ' OK LOGOUT completed')
-    return 'Logout'
+    async def cmd_noop(self, session, reader, writer, tag, args):
+        await self.send_message(writer, tag + " OK NOOP completed")
+        return "Not Authenticated"
 
-  async def cmd_noop(self, session, reader, writer, tag, args):
-    await self.send_message(writer, tag + ' OK NOOP completed')
-    return 'Not Authenticated'
+    def stop_if_too_many_attempts(self, session):
+        if session.get_number_of_login_attempts() >= self.max_tries:
+            session.end_session()
 
-  def stop_if_too_many_attempts(self, session):
-    if self.max_tries < session.get_number_of_login_attempts():
-      session.end_session()
+    @staticmethod
+    async def send_message(writer, msg):
+        message_bytes = bytes(msg + CRLF, "utf-8")
+        writer.write(message_bytes)
+        await writer.drain()
 
-  @staticmethod
-  async def send_message(writer, msg):
-    message_bytes = bytes(msg + CRLF, 'utf-8')
-    writer.write(message_bytes)
-    await writer.drain()
-
-  @staticmethod
-  def try_b64decode(b64_str, session):
-    try:
-      result = base64.b64decode(b64_str)
-      return True, str(result, 'utf-8')
-    except binascii.Error:
-      logger.warning('Error decoding base64: {0} ({1})'.format(
-          binascii.hexlify(b64_str), session.id))
-      return False, ''
-
-  @staticmethod
-  def strip_quotes(quoted_str):
-    if quoted_str.startswith('\"') and quoted_str.endswith('\"'):
-      nonquoted_str = quoted_str[1:-1]
-    else:
-      nonquoted_str = quoted_str
-    return nonquoted_str
+    @staticmethod
+    def try_b64decode(b64_str, session):
+        try:
+            return True, base64.b64decode(b64_str, validate=True)
+        except binascii.Error, ValueError:
+            logger.debug("Error decoding base64: %s (%s)", binascii.hexlify(b64_str), session.id)
+            return False, b""

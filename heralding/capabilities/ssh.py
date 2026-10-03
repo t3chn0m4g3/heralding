@@ -1,4 +1,4 @@
-# Copyright (C) 2017 Roman Samoilenko <ttahabatt@gmail.com>
+# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -13,95 +13,105 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
 import logging
-import functools
-
-from heralding.capabilities.handlerbase import HandlerBase
+import os
+import weakref
 
 import asyncssh
-from Crypto.PublicKey import RSA
+
+from heralding.capabilities.handlerbase import HandlerBase
 
 logger = logging.getLogger(__name__)
 
 
 class SSH(asyncssh.SSHServer, HandlerBase):
-  connections_list = []
+    NAME = "ssh"
+    # live connections only; entries disappear when asyncssh drops the connection object
+    connections: weakref.WeakSet = weakref.WeakSet()
 
-  def __init__(self, options):
-    asyncssh.SSHServer.__init__(self)
-    HandlerBase.__init__(self, options)
+    def __init__(self, options):
+        asyncssh.SSHServer.__init__(self)
+        HandlerBase.__init__(self, options)
+        self.session = None
+        self.connection = None
+        self._pubkeys = []
 
-  def connection_made(self, conn):
-    SSH.connections_list.append(conn)
-    self.address = conn.get_extra_info('peername')
-    self.dest_address = conn.get_extra_info('sockname')
-    self.connection = conn
-    self.handle_connection()
-    logger.debug('SSH connection received from %s.' %
-                 conn.get_extra_info('peername')[0])
+    def connection_made(self, conn):
+        SSH.connections.add(conn)
+        self.connection = conn
+        address = conn.get_extra_info("peername")
+        dest_address = conn.get_extra_info("sockname")
+        if self._limit_reached(address):
+            conn.close()
+            return
+        self.session = self.create_session(address, dest_address)
+        logger.debug("SSH connection received from %s.", address[0])
 
-  def connection_lost(self, exc):
-    self.session.set_auxiliary_data(self.get_auxiliary_data())
-    self.close_session(self.session)
-    if exc:
-      logger.debug('SSH connection error: ' + str(exc))
-    else:
-      logger.debug('SSH connection closed.')
+    def connection_lost(self, exc):
+        if self.connection is not None:
+            SSH.connections.discard(self.connection)
+        if self.session is None:
+            return
+        self.session.set_auxiliary_data(self.get_auxiliary_data())
+        self.close_session(self.session)
+        if exc:
+            logger.debug("SSH connection error [%s] %s", type(exc).__name__, exc)
+        else:
+            logger.debug("SSH connection closed.")
 
-  def begin_auth(self, username):
-    return True
+    def begin_auth(self, username):
+        return True
 
-  def password_auth_supported(self):
-    return True
+    def password_auth_supported(self):
+        return True
 
-  def validate_password(self, username, password):
-    self.session.add_auth_attempt(
-        'plaintext', username=username, password=password)
-    return False
+    def public_key_auth_supported(self):
+        return True
 
-  def handle_connection(self):
-    if HandlerBase.global_sessions > HandlerBase.MAX_GLOBAL_SESSIONS:
-      protocol = self.__class__.__name__.lower()
-      logger.warning(
-          'Got {0} session on port {1} from {2}:{3}, but not handling it because the global session limit has '
-          'been reached'.format(protocol, self.port, *self.address))
-    else:
-      self.session = self.create_session(self.address, self.dest_address)
+    def validate_public_key(self, username, key):
+        # Key attempts are not credentials: they go to auxiliary data, never to the authentication CSV
+        if len(self._pubkeys) < 20:
+            self._pubkeys.append(
+                {
+                    "username": username,
+                    "key_type": key.get_algorithm(),
+                    "fingerprint_sha256": key.get_fingerprint("sha256"),
+                }
+            )
+        return False
 
-  def get_auxiliary_data(self):
-    data_fields = [
-        'client_version', 'recv_cipher', 'recv_mac', 'recv_compression'
-    ]
-    data = {f: self.connection.get_extra_info(f) for f in data_fields}
-    return data
+    def validate_password(self, username, password):
+        # asyncssh also routes keyboard-interactive "Password:" responses through here
+        if self.session is not None:
+            self.session.add_auth_attempt("plaintext", username=username, password=password)
+        return False
 
-  @staticmethod
-  def change_server_banner(banner):
-    """_send_version code was copied from asyncssh.connection in order to change
-        internal local variable 'version', providing custom banner."""
+    def get_auxiliary_data(self):
+        data_fields = ["client_version", "recv_cipher", "recv_mac", "recv_compression"]
+        data = {f: self.connection.get_extra_info(f) for f in data_fields}
+        if self._pubkeys:
+            data["publickey_attempts"] = list(self._pubkeys)
+        return data
 
-    @functools.wraps(asyncssh.connection.SSHConnection._send_version)
-    def _send_version(self):
-      """Start the SSH handshake"""
+    async def create_server(self, bind_host, port, ssl_context=None):
+        key_file = "ssh.key"
+        self.generate_ssh_key(key_file)
+        options = self.options
+        banner = self.persona_value("banner", "SSH-2.0-OpenSSH_9.6")
+        return await asyncssh.create_server(
+            lambda: type(self)(options),
+            bind_host,
+            port,
+            server_host_keys=[key_file],
+            login_timeout=self.timeout,
+            server_version=banner.removeprefix("SSH-2.0-"),
+        )
 
-      version = bytes(banner, 'utf-8')
-
-      if self.is_client():
-        self._client_version = version
-        self._extra.update(client_version=version.decode('ascii'))
-      else:
-        self._server_version = version
-        self._extra.update(server_version=version.decode('ascii'))
-
-      self._send(version + b'\r\n')
-
-    asyncssh.connection.SSHConnection._send_version = _send_version
-
-  @staticmethod
-  def generate_ssh_key(ssh_key_file):
-    if not os.path.isfile(ssh_key_file):
-      with open(ssh_key_file, 'w') as _file:
-        rsa_key = RSA.generate(2048)
-        priv_key_text = str(rsa_key.exportKey('PEM', pkcs=1), 'utf-8')
-        _file.write(priv_key_text)
+    @staticmethod
+    def generate_ssh_key(ssh_key_file):
+        if os.path.isfile(ssh_key_file):
+            return
+        key = asyncssh.generate_private_key("ssh-rsa", key_size=2048)
+        fd = os.open(ssh_key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(key.export_private_key())

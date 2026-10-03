@@ -1,63 +1,75 @@
 import asyncio
-import unittest
+import hashlib
 
 import pymysql
+
 from heralding.capabilities import mysql
-from heralding.misc.common import cancel_all_pending_tasks
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.tests.conftest import make_options
 
 
-class MySQLTests(unittest.TestCase):
+async def test_invalid_login(serve, sink):
+    cap = mysql.MySQL(make_options())
+    host, port = await serve(cap)
 
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
+    def run():
+        try:
+            pymysql.connect(
+                host=host,
+                port=port,
+                user="tuser",
+                password="tpass",
+                database="testdb",
+                connect_timeout=5,
+            )
+        except pymysql.err.OperationalError as exc:
+            return exc
+        return None
 
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
+    exc = await asyncio.to_thread(run)
+    assert isinstance(exc, pymysql.err.OperationalError)
+    assert exc.args[0] == 1045
+    assert "Access denied for user 'tuser'@'127.0.0.1' (using password: YES)" in exc.args[1]
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
+    assert attempts[0]["username"] == "tuser"
 
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
 
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
+async def test_mysql_logs_salt_and_hashcat_11200(serve, sink):
+    host, port = await serve(mysql.MySQL(make_options()))
 
-    self.loop.run_until_complete(cancel_all_pending_tasks(self.loop))
-    self.loop.close()
+    def run():
+        try:
+            pymysql.connect(host=host, port=port, user="root", password="secret", connect_timeout=5)
+        except pymysql.err.OperationalError as exc:
+            return exc.args[0]
+        return None
 
-  def test_invalid_login(self):
-    """Tests if mysql server responds correctly to a invalid login attempt."""
+    assert await asyncio.to_thread(run) == 1045
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["username"] == "root"
+    assert attempt["password"] == ""
+    tag, rest = attempt["password_hash"][1:].split("$", 1)
+    assert tag == "mysqlna"
+    salt_hex, scramble_hex = rest.split("*")
+    salt, scramble = bytes.fromhex(salt_hex), bytes.fromhex(scramble_hex)
+    assert len(salt) == 20 and len(scramble) == 20
+    # mysql_native_password: SHA1(pw) XOR SHA1(salt + SHA1(SHA1(pw)))
+    s1 = hashlib.sha1(b"secret").digest()
+    s2 = hashlib.sha1(salt + hashlib.sha1(s1).digest()).digest()
+    assert bytes(a ^ b for a, b in zip(s1, s2, strict=True)) == scramble
 
-    def mysql_login():
-      try:
-        pymysql.connect(
-            host="0.0.0.0",
-            port=8306,
-            user="tuser",
-            password="tpass",
-            db="testdb")
-      except pymysql.err.OperationalError as e:
-        return e
-      return None
 
-    options = {'enabled': 'True', 'port': 8306}
-    mysql_cap = mysql.MySQL(options, self.loop)
+async def test_thread_id_differs_between_connections(serve, sink):
+    host, port = await serve(mysql.MySQL(make_options()))
 
-    server_coro = asyncio.start_server(
-        mysql_cap.handle_session, '0.0.0.0', 8306, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
+    def thread_id():
+        conn = pymysql.connections.Connection(
+            host=host, port=port, user="u", password="p", connect_timeout=5, defer_connect=True
+        )
+        try:
+            conn.connect()
+        except pymysql.err.OperationalError:
+            pass
+        return conn.server_thread_id[0]
 
-    mysql_task = self.loop.run_in_executor(None, mysql_login)
-    login_exception = self.loop.run_until_complete(mysql_task)
-
-    self.assertIsInstance(login_exception, pymysql.err.OperationalError)
-    self.assertEqual(
-        str(login_exception),
-        '(1045, "Access denied for user \'tuser\'@\'127.0.0.1\' (using password: YES)")'
-    )
-
-  def cb(self, socket, command, option):
-    return
+    ids = {await asyncio.to_thread(thread_id) for _ in range(3)}
+    assert len(ids) == 3

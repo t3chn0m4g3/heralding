@@ -1,125 +1,127 @@
-# -*- coding: utf-8 -*-
-# Copyright (C) 2017 Roman Samoilenko <ttahabatt@gmail.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-import sys
-import imaplib
 import asyncio
-import unittest
+import base64
+import imaplib
+
+import pytest
 
 from heralding.capabilities.imap import Imap
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.tests.conftest import make_options
 
 
-class ImapTests(unittest.TestCase):
-
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
-
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
-
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
-
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
-
-    self.loop.close()
-
-  def test_LOGIN(self):
-    """Testing different login combinations using simple login auth mechanism."""
-
-    def imap_login():
-      login_sequences = [('kajoj_admin', 'thebestpassword'),
-                         ('\"kajoj_admin\"', 'the best password')]
-
-      imap_obj = imaplib.IMAP4('127.0.0.1', port=8888)
-      for sequence in login_sequences:
-        with self.assertRaises(imaplib.IMAP4.error) as error:
-          imap_obj.login(sequence[0], sequence[1])
-        imap_exception = error.exception
-        self.assertEqual(imap_exception.args[0], b'Authentication failed')
-      imap_obj.logout()
-
-    options = {
-        'enabled': 'True',
-        'port': 143,
-        'timeout': 30,
-        'protocol_specific_data': {
-            'max_attempts': 3,
-            'banner': '* OK IMAP4rev1 Server Ready'
-        }
-    }
-    capability = Imap(options, self.loop)
-    server_coro = asyncio.start_server(
-        capability.handle_session, '0.0.0.0', 8888, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
-
-    imap_task = self.loop.run_in_executor(None, imap_login)
-    self.loop.run_until_complete(imap_task)
-
-  def test_AUTHENTICATE_PLAIN(self):
-    """Testing different login combinations using plain auth mechanism."""
-
-    def imap_authenticate():
-      # imaplib in Python 3.5.3 and higher returns str representation of auth failure
-      # But imaplib in Python 3.5.2 and lower returns bytes.
-      # This is a sad hack to get around this problem.
-      pyversion = sys.version_info[:3]
-      if pyversion < (3, 5, 3):
-        auth_failure_msg = b'Authentication failed'
-      else:
-        auth_failure_msg = 'Authentication failed'
-      login_sequences = [
-          ('\0kajoj_admin\0thebestpassword', auth_failure_msg),
-          ('\0пайтон\0наилучшийпароль', auth_failure_msg),
-          ('kajoj_admin\0the best password',
-           'AUTHENTICATE command error: BAD [b\'invalid command\']')
-      ]
-
-      imap_obj = imaplib.IMAP4('127.0.0.1', port=8888)
-      for sequence in login_sequences:
-        with self.assertRaises(imaplib.IMAP4.error) as error:
-          imap_obj.authenticate('PLAIN', lambda x: sequence[0])
-        imap_exception = error.exception
-        self.assertEqual(imap_exception.args[0], sequence[1])
-      imap_obj.logout()
-
-    options = {
-        'enabled': 'True',
-        'port': 143,
-        'timeout': 30,
-        'protocol_specific_data': {
-            'max_attempts': 3,
-            'banner': '* OK IMAP4rev1 Server Ready'
-        }
-    }
-    capability = Imap(options, self.loop)
-
-    server_coro = asyncio.start_server(
-        capability.handle_session, '0.0.0.0', 8888, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
-
-    imap_task = self.loop.run_in_executor(None, imap_authenticate)
-    self.loop.run_until_complete(imap_task)
+def _options():
+    return make_options(max_attempts=3, banner="* OK IMAP4rev1 Server Ready")
 
 
-if __name__ == '__main__':
-  unittest.main()
+async def test_login(serve, sink):
+    host, port = await serve(Imap(_options()))
+
+    def run():
+        client = imaplib.IMAP4(host, port)
+        for user, password in [
+            ("kajoj_admin", "thebestpassword"),
+            ('"kajoj_admin"', "the best password"),
+        ]:
+            with pytest.raises(imaplib.IMAP4.error) as excinfo:
+                client.login(user, password)
+            assert excinfo.value.args[0] == "Authentication failed"
+        client.logout()
+
+    await asyncio.to_thread(run)
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 2)
+    assert (attempts[0]["username"], attempts[0]["password"]) == ("kajoj_admin", "thebestpassword")
+    assert (attempts[1]["username"], attempts[1]["password"]) == (
+        "kajoj_admin",
+        "the best password",
+    )
+
+
+async def test_authenticate_plain(serve, sink):
+    host, port = await serve(Imap(_options()))
+
+    def run():
+        client = imaplib.IMAP4(host, port)
+        for blob, expected in [
+            ("\0kajoj_admin\0thebestpassword", "Authentication failed"),
+            ("\0пайтон\0наилучшийпароль", "Authentication failed"),
+            (
+                "kajoj_admin\0the best password",
+                "AUTHENTICATE command error: BAD [b'invalid command']",
+            ),
+        ]:
+            with pytest.raises(imaplib.IMAP4.error) as excinfo:
+                client.authenticate("PLAIN", lambda _x, blob=blob: blob)
+            assert excinfo.value.args[0] == expected
+        client.logout()
+
+    await asyncio.to_thread(run)
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 2)
+    assert attempts[1]["username"] == "пайтон"
+    assert attempts[1]["password"] == "наилучшийпароль"
+
+
+async def test_imap_allows_exactly_max_attempts(serve, sink):
+    host, port = await serve(Imap(make_options(max_attempts=2, banner="* OK")))
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        try:
+            for _ in range(2):
+                with pytest.raises(imaplib.IMAP4.error, match="Authentication failed"):
+                    client.login("u", "p")
+            with pytest.raises(imaplib.IMAP4.abort):
+                client.noop()
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
+    assert len(await asyncio.to_thread(sink.wait_for_auth, 2)) == 2
+
+
+async def test_imap_login_latin1_is_logged(serve, sink):
+    host, port = await serve(Imap(make_options(max_attempts=3, banner="* OK")))
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        client._encoding = "latin1"
+        try:
+            with pytest.raises(imaplib.IMAP4.error):
+                client.login("u", "pä")
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["password"] == "p\\xe4"
+
+
+async def test_imap_authenticate_plain_sasl_ir(serve, sink):
+    host, port = await serve(Imap(make_options(max_attempts=3, banner="* OK")))
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        try:
+            typ, _ = client._simple_command("AUTHENTICATE", "PLAIN", base64.b64encode(b"\0u\0p "))
+            assert typ == "NO"
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["password"] == "p "
+
+
+async def test_imap_login_with_literals(serve, sink):
+    host, port = await serve(Imap(make_options(max_attempts=3, banner="* OK")))
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        try:
+            client.literal = b'p"'
+            typ, _ = client._simple_command("LOGIN", "u")
+            assert typ == "NO"
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert (attempt["username"], attempt["password"]) == ("u", 'p"')

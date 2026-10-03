@@ -16,143 +16,157 @@
 # *** This file contains all the PDU required for RDP Protocol ***
 # each top tier PDU class will have a payload and generate method
 
-from .packer import Uint16BE, Int16BE, Uint32LE, Uint32BE
-from .parser import x224ConnectionRequestPDU
-from .security import ServerSecurity
+import struct
+
+from .packer import Int16BE, Uint16BE, Uint32LE
 
 
 class tpktPDU:
+    def __init__(self, payload):
+        self.version = 3
+        self.reserved = 0
+        self.payload = payload
 
-  def __init__(self, payload):
-    self.version = 3
-    self.reserved = 0
-    self.payload = payload
-
-  def generate(self):
-    payload_len = Int16BE.pack(1 + 1 + 2 + len(self.payload))
-    # print(repr(payload_len))
-    return bytes([self.version, self.reserved]) + payload_len + self.payload
+    def generate(self):
+        payload_len = Int16BE.pack(1 + 1 + 2 + len(self.payload))
+        # print(repr(payload_len))
+        return bytes([self.version, self.reserved]) + payload_len + self.payload
 
 
 class x224DataPDU:
+    @staticmethod
+    def generate():
+        return b"\x02\xf0\x80"
 
-  @staticmethod
-  def generate():
-    return b'\x02\xf0\x80'
 
+class x224ConnectionConfirmPDU:
+    def __init__(self, reqProto=None):
+        self.type = b"\xd0"
+        self.dest_ref = b"\x00\x00"  # 0 bytes
+        self.src_ref = b"\x12\x34"  # bogus value
+        self.options = b"\x00"
+        self.reqProto = reqProto
+        self.sentNegoFail = False
+        self.selected_protocol = 0
 
-class x224ConnectionConfirmPDU():
+    def generate(self):
+        PROTOCOL_SSL = 0x00000001
 
-  def __init__(self, reqProto=None):
-    self.type = b'\xd0'
-    self.dest_ref = b'\x00\x00'  # 0 bytes
-    self.src_ref = b'\x12\x34'  # bogus value
-    self.options = b'\x00'
-    self.reqProto = reqProto
-    self.sentNegoFail = False
+        data = self.type + self.dest_ref + self.src_ref + self.options
+        len_indicator = len(data)  # 1byte length of PDU without indicator byte
 
-  def generate(self):
-    PROTOCOL_SSL = 0x00000001
+        if self.reqProto:
+            # Prefer NLA when offered; TLS-only clients retain the classic flow.
+            selectedProto = 2 if self.reqProto & 2 else self.reqProto & PROTOCOL_SSL
+            self.selected_protocol = selectedProto
+            proto_bytes = Uint32LE.pack(selectedProto)
+            # We accept extended GCC client blocks (and ignore unknown blocks).
+            nego_res = b"\x02\x01\x08\x00" + proto_bytes
 
-    data = self.type + self.dest_ref + self.src_ref + self.options
-    len_indicator = len(data)  # 1byte length of PDU without indicator byte
+            # send NegoFail when a non-TLS method is requested
+            if selectedProto not in (PROTOCOL_SSL, 2):
+                self.sentNegoFail = True
+                nego_res = b"\x03\x00\x08\x00" + b"\x01" + bytes(3)  # SSL required by server
+            len_indicator += len(nego_res)
+            data += nego_res
+        else:
+            # RDP sec, if no proto requested. Currently not supported so send a Nego Fail
+            self.sentNegoFail = True
+            nego_res = b"\x03\x00\x08\x00" + b"\x01" + bytes(3)
+            len_indicator += len(nego_res)
+            data += nego_res
 
-    if self.reqProto:
-      selectedProto = self.reqProto & PROTOCOL_SSL  # for now only tls
-      proto_bytes = Uint32LE.pack(selectedProto)
-      nego_res = b'\x02\x00\x08\x00' + proto_bytes
+        return bytes([len_indicator]) + data
 
-      # send NegoFail when a non-TLS method is requested
-      if not (selectedProto == PROTOCOL_SSL):
-        self.sentNegoFail = True
-        nego_res = b'\x03\x00\x08\x00' + b'\x01' + bytes(
-            3)  # SSL required by server
-      len_indicator += len(nego_res)
-      data += nego_res
-    else:
-      # RDP sec, if no proto requested. Currently not supported so send a Nego Fail
-      self.sentNegoFail = True
-      nego_res = b'\x03\x00\x08\x00' + b'\x01' + bytes(3)
-      len_indicator += len(nego_res)
-      data += nego_res
-
-    return bytes([len_indicator]) + data
-
-  def getFullPacket(self):
-    return tpktPDU(self.generate()).generate()
+    def getFullPacket(self):
+        return tpktPDU(self.generate()).generate()
 
 
 class ServerData:
+    @classmethod
+    def generate(cls, cReqproto, channel_count=0):
+        # Servr Core data
+        coreData_1 = b"\x01\x0c\x0c\x00\x04\x00\x08\x00"
+        clientReqPro = Uint32LE.pack(cReqproto)
 
-  @classmethod
-  def generate(cls, cReqproto, serverSec):
-    # Servr Core data
-    coreData_1 = b'\x01\x0c\x0c\x00\x04\x00\x08\x00'
-    clientReqPro = Uint32LE.pack(cReqproto)
+        # ServerNetwork Data
+        channels = b"".join(struct.pack("<H", 1004 + i) for i in range(channel_count))
+        if channel_count % 2:
+            channels += bytes(2)
+        netData = struct.pack("<HHHH", 0x0C03, 8 + len(channels), 1003, channel_count) + channels
+        # Enhanced RDP security uses the TLS certificate. No proprietary RSA
+        # certificate or random fields are allowed when method and level are zero.
+        security = struct.pack("<HHII", 0x0C02, 12, 0, 0)
+        # ADD all
+        serverCoreData = coreData_1 + clientReqPro
+        serverNetData = netData
+        serverSecData = security
 
-    # ServerNetwork Data
-    netData = b'\x03\x0c\x08\x00\xeb\x03\x00\x00'  # here channel count 0
-
-    # ServerSec Data
-    # here choosing encryption of 128bit by default method \x02\x00\x00\x00
-    part_1 = b'\x02\x0c\xec\x00\x00\x00\x00\x00\x00\x00\x00\x00\x20\x00\x00\x00\xb8\x00\x00\x00'
-    serverRandom = ServerSecurity.SERVER_RANDOM
-
-    # an instance of ServerSecurity class required
-    certData = serverSec.getServerCertBytes()
-    # ADD all
-    serverCoreData = coreData_1 + clientReqPro
-    serverNetData = netData
-    serverSecData = part_1 + serverRandom + certData
-
-    return serverCoreData + serverNetData + serverSecData
+        return serverCoreData + serverNetData + serverSecData
 
 
-class MCSConnectResponsePDU():
-  """ Server MCS Connect Response PDU with GCC Conference Create Response """
+class MCSConnectResponsePDU:
+    """Server MCS Connect Response PDU with GCC Conference Create Response"""
 
-  def __init__(self, cReqproto, serverSec):
-    self.cReqproto = cReqproto
-    self.serverSec = serverSec
+    def __init__(self, cReqproto, channel_count=0):
+        self.cReqproto = cReqproto
+        self.channel_count = channel_count
 
-  def generate(self):
-    serverData = ServerData.generate(self.cReqproto, self.serverSec)
-    serverDataLen = Uint16BE.pack(len(serverData) | 0x8000)
-    gccCreateRes = b'\x00\x05\x00\x14\x7c\x00\x01\x2a\x14\x76\x0a\x01\x01\x00\x01\xc0\x00\x4d\x63\x44\x6e'
-    cc_userDataLen = Uint16BE.pack(len(serverData) + 2 + len(gccCreateRes))
-    cc_userData_1 = b'\x04\x82'
-    domainParams = b'\x30\x1a\x02\x01\x22\x02\x01\x03\x02\x01\x00\x02\x01\x01\x02\x01\x00\x02\x01\x01\x02\x03\x00\xff\xf8\x02\x01\x02'
-    cc_res = b'\x0a\x01\x00\x02\x01\x00'
-    berLen = Uint16BE.pack(
-        len(cc_res) + len(domainParams) + 2 + 2 + len(serverData) + 2 +
-        len(gccCreateRes))
-    bertype = b'\x7f\x66\x82'
+    def generate(self):
+        serverData = ServerData.generate(self.cReqproto, self.channel_count)
+        serverDataLen = Uint16BE.pack(len(serverData) | 0x8000)
+        gccCreateRes = (
+            b"\x00\x05\x00\x14\x7c\x00\x01\x2a\x14\x76\x0a\x01\x01\x00\x01\xc0\x00\x4d\x63\x44\x6e"
+        )
+        cc_userDataLen = Uint16BE.pack(len(serverData) + 2 + len(gccCreateRes))
+        cc_userData_1 = b"\x04\x82"
+        domainParams = b"\x30\x1a\x02\x01\x22\x02\x01\x03\x02\x01\x00\x02\x01\x01\x02\x01\x00\x02\x01\x01\x02\x03\x00\xff\xf8\x02\x01\x02"
+        cc_res = b"\x0a\x01\x00\x02\x01\x00"
+        berLen = Uint16BE.pack(
+            len(cc_res) + len(domainParams) + 2 + 2 + len(serverData) + 2 + len(gccCreateRes)
+        )
+        bertype = b"\x7f\x66\x82"
 
-    return bertype + berLen + cc_res + domainParams + cc_userData_1 + cc_userDataLen + gccCreateRes + serverDataLen + serverData
+        return (
+            bertype
+            + berLen
+            + cc_res
+            + domainParams
+            + cc_userData_1
+            + cc_userDataLen
+            + gccCreateRes
+            + serverDataLen
+            + serverData
+        )
 
-  def getFullPacket(self):
-    return tpktPDU(x224DataPDU.generate() + self.generate()).generate()
+    def getFullPacket(self):
+        return tpktPDU(x224DataPDU.generate() + self.generate()).generate()
 
 
-class MCSAttachUserConfirmPDU():
+class MCSAttachUserConfirmPDU:
+    def __init__(self, channel_count=0):
+        # Global I/O is 1003; static channels occupy 1004..1003+count.
+        # A fixed user ID of 1007 aliases a static channel for count >= 4.
+        if not 0 <= channel_count <= 31:
+            raise ValueError("invalid RDP channel count")
+        self.user_channel_id = 1004 + channel_count
 
-  def generate(self):
-    return b'\x2e\x00\x00\x06'
+    def generate(self):
+        return b"\x2e\x00" + Uint16BE.pack(self.user_channel_id - 1001)
 
-  # This is full static but just to be sillimar to other methods
-  def getFullPacket(self):
-    return tpktPDU(x224DataPDU.generate() + self.generate()).generate()
+    # This is full static but just to be sillimar to other methods
+    def getFullPacket(self):
+        return tpktPDU(x224DataPDU.generate() + self.generate()).generate()
 
 
-class MCSChannelJoinConfirmPDU():
+class MCSChannelJoinConfirmPDU:
+    def __init__(self, initiator, channelID):
+        self.initiator = Uint16BE.pack(initiator)
+        self.channelID = Uint16BE.pack(channelID)
 
-  def __init__(self, initiator, channelID):
-    self.initiator = Uint16BE.pack(initiator)
-    self.channelID = Uint16BE.pack(channelID)
+    def generate(self):
+        res = b"\x3e\x00"
+        return res + self.initiator + self.channelID + self.channelID
 
-  def generate(self):
-    res = b'\x3e\x00'
-    return res + self.initiator + self.channelID + self.channelID
-
-  def getFullPacket(self):
-    return tpktPDU(x224DataPDU.generate() + self.generate()).generate()
+    def getFullPacket(self):
+        return tpktPDU(x224DataPDU.generate() + self.generate()).generate()

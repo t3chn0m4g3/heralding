@@ -1,4 +1,4 @@
-# Copyright (C) 2013 Aniket Panse <contact@aniketpanse.in>
+# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,75 +20,121 @@
 # and such derivative works.
 
 import base64
+import binascii
 import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.libs.http.aioserver import AsyncBaseHTTPRequestHandler
+from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SERVER_HEADER = "Microsoft-IIS/10.0"
+
+# Error page templates in the style of the persona's web server family (no Python fingerprints).
+ERROR_PAGE_IIS = (
+    '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN""http://www.w3.org/TR/html4/strict.dtd">\r\n'
+    "<HTML><HEAD><TITLE>%(message)s</TITLE>\r\n"
+    '<META HTTP-EQUIV="Content-Type" Content="text/html; charset=us-ascii"></HEAD>\r\n'
+    "<BODY><h2>%(message)s</h2>\r\n<hr><p>HTTP Error %(code)d. %(explain)s</p>\r\n</BODY></HTML>\r\n"
+)
+ERROR_PAGE_UNIX = (
+    "<html>\r\n<head><title>%(code)d %(message)s</title></head>\r\n"
+    "<body>\r\n<center><h1>%(code)d %(message)s</h1></center>\r\n"
+    "<hr><center>%(server)s</center>\r\n</body>\r\n</html>\r\n"
+)
+
+HTTP_401_BODY = (
+    b"<!DOCTYPE html><html><head><title>401 Unauthorized</title></head>"
+    b"<body><h1>Unauthorized</h1><p>This server could not verify that you are authorized "
+    b"to access the document requested.</p></body></html>"
+)
+
+
+def _is_iis_family(server_header: str, os_family: str | None) -> bool:
+    """Pick the error page style from the advertised server; fall back to the persona's OS."""
+    lowered = server_header.lower()
+    if "iis" in lowered or "microsoft" in lowered:
+        return True
+    if any(name in lowered for name in ("nginx", "apache", "lighttpd", "openresty", "caddy")):
+        return False
+    return (os_family or "windows") == "windows"
+
 
 class HTTPHandler(AsyncBaseHTTPRequestHandler):
+    sys_version = ""  # never append "Python/x.y" to the Server header
 
-  def __init__(self, reader, writer, httpsession, options):
-    self._options = options
-    if 'banner' in self._options:
-      self._banner = self._options['banner']
-    else:
-      self._banner = 'Microsoft-IIS/5.0'
-    self._session = httpsession
-    address = writer.get_extra_info('address')
-    super().__init__(reader, writer, address)
+    def __init__(self, reader, writer, httpsession, options, server_header=None, os_family=None):
+        self.server_version = server_header or DEFAULT_SERVER_HEADER
+        template = (
+            ERROR_PAGE_IIS if _is_iis_family(self.server_version, os_family) else ERROR_PAGE_UNIX
+        )
+        self.error_message_format = template.replace(
+            "%(server)s", self.server_version.replace("%", "%%")
+        )
+        self.error_content_type = "text/html"
+        self._session = httpsession
+        super().__init__(reader, writer, writer.get_extra_info("peername"))
 
-  def do_HEAD(self):
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
+    def version_string(self):
+        return self.server_version
 
-  def do_AUTHHEAD(self):
-    self.send_response(401)
-    # TODO: Value for basic realm...
-    self.send_header('WWW-Authenticate', 'Basic realm=\"\"')
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
+    def _send_401(self):
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="Restricted"')
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(HTTP_401_BODY)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(HTTP_401_BODY)
+        self.close_connection = True
 
-  def do_GET(self):
-    if self.headers['Authorization'] is None:
-      self.do_AUTHHEAD()
-    else:
-      hdr = self.headers['Authorization']
-      _, enc_uname_pwd = hdr.split(' ')
-      dec_uname_pwd = str(base64.b64decode(enc_uname_pwd), 'utf-8')
-      pos = dec_uname_pwd.find(':')
-      uname, pwd = dec_uname_pwd[:pos], dec_uname_pwd[pos +
-                                                      1:len(dec_uname_pwd)]
-      self._session.add_auth_attempt('plaintext', username=uname, password=pwd)
-      self.do_AUTHHEAD()
-      headers_bytes = bytes(self.headers['Authorization'], 'utf-8')
-      self.wfile.write(headers_bytes)
-      self.wfile.write(b'not authenticated')
-      aux_data = self.get_auxiliary_info()
-      self._session.set_auxiliary_data(aux_data)
-      # Disable logging provided by BaseHTTPServer
-  def log_message(self, format_, *args):
-    pass
+    def _handle_auth(self):
+        self._session.set_auxiliary_data(self.get_auxiliary_info())
+        header = self.headers.get("Authorization")
+        if header is None:
+            self._send_401()
+            return
+        scheme, _, blob = header.strip().partition(" ")
+        if scheme.lower() != "basic" or not blob:
+            self.send_error(400, "Bad Request")
+            return
+        try:
+            decoded = decode_lossless(base64.b64decode(blob.strip(), validate=True))
+        except binascii.Error, ValueError:
+            self.send_error(400, "Bad Request")
+            return
+        username, _, password = decoded.partition(":")
+        self._session.add_auth_attempt("plaintext", username=username, password=password)
+        self._send_401()
 
-  def get_auxiliary_info(self):
-    data = {}
-    for field in self.headers.keys():
-      data.update({str(field): str(self.headers[str(field)])})
+    do_GET = do_POST = do_PUT = do_HEAD = do_OPTIONS = do_DELETE = do_PATCH = _handle_auth
 
-    return data
+    # Disable logging provided by BaseHTTPServer
+    def log_message(self, format_, *args):
+        pass
+
+    def get_auxiliary_info(self):
+        return {str(field): str(self.headers[str(field)]) for field in self.headers.keys()}
 
 
 class Http(HandlerBase):
+    NAME = "http"
 
-  def __init__(self, options):
-    super().__init__(options)
-    self._options = options
+    def __init__(self, options):
+        super().__init__(options)
+        self._options = options
 
-  async def execute_capability(self, reader, writer, session):
-    http_cap = HTTPHandler(
-        reader, writer, httpsession=session, options=self._options)
-    await http_cap.run()
-    session.end_session()
+    async def execute_capability(self, reader, writer, session):
+        persona = HandlerBase.persona
+        http_cap = HTTPHandler(
+            reader,
+            writer,
+            httpsession=session,
+            options=self._options,
+            server_header=self.persona_value("banner", DEFAULT_SERVER_HEADER),
+            os_family=persona.os_family if persona is not None else None,
+        )
+        await http_cap.run()
+        session.end_session()

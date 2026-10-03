@@ -13,87 +13,96 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import ssl
+"""TLS over an existing asyncio stream (RDP upgrades the connection after the x224 negotiation).
+
+Implemented with ``ssl.MemoryBIO`` so that the plaintext RDP PDUs can be read and written
+through the same StreamReader/StreamWriter. Old mstsc clients still speak TLS 1.0, so the
+minimum version is configurable and SECLEVEL is lowered to allow their cipher suites.
+"""
+
+import asyncio
 import logging
+import ssl
+import warnings
+
+from heralding.misc.tls import minimum_version
 
 logger = logging.getLogger(__name__)
 
+_CHUNK = 4096
+
 
 class TLSHandshakeError(Exception):
-
-  def __init__(self, message=""):
-    Exception.__init__(self, message)
+    pass
 
 
 class TLS:
-  """ TLS implamentation using memory BIO """
+    def __init__(self, writer, reader, pem_file=None, min_version="TLSv1", context=None):
+        self._in = ssl.MemoryBIO()
+        self._out = ssl.MemoryBIO()
+        ctx = context
+        if ctx is None:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            with warnings.catch_warnings():
+                # TLS 1.0/1.1 are deprecated in Python but still spoken by old mstsc clients;
+                # offering them is the point of this honeypot.
+                warnings.simplefilter("ignore", DeprecationWarning)
+                ctx.minimum_version = minimum_version(min_version)
+            ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+            ctx.load_cert_chain(pem_file)
+        self._ssl = ctx.wrap_bio(self._in, self._out, server_side=True)
+        self.writer = writer
+        self.reader = reader
 
-  def __init__(self, writer, reader, pem_file):
-    """@param: writer and reader are asyncio stream writer and reader objects"""
-    self._tlsInBuff = ssl.MemoryBIO()
-    self._tlsOutBuff = ssl.MemoryBIO()
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_1)
-    ctx.set_ciphers('RSA:!aNULL')
-    ctx.check_hostname = False
-    ctx.load_cert_chain(pem_file)
-    self._tlsObj = ctx.wrap_bio(
-        self._tlsInBuff, self._tlsOutBuff, server_side=True)
-    self.writer = writer
-    self.reader = reader
+    async def _flush(self):
+        data = self._out.read()
+        if data:
+            self.writer.write(data)
+            await self.writer.drain()
 
-  async def do_tls_handshake(self):
-    client_hello = await self.reader.read(4096)
-    self._tlsInBuff.write(client_hello)
-    try:
-      self._tlsObj.do_handshake()
-    except ssl.SSLWantReadError:
-      server_hello = self._tlsOutBuff.read()
-      self.writer.write(server_hello)
-      await self.writer.drain()
-    except ssl.SSLError as e:
-      if "WRONG_VERSION_NUMBER" in e.args[1]:
-        logger.debug("Client tried to connect with wrong SSL version")
-      else:
-        logger.debug(e.args[1])
+    async def _feed(self):
+        chunk = await self.reader.read(_CHUNK)
+        if not chunk:
+            raise TLSHandshakeError("connection closed during TLS")
+        self._in.write(chunk)
 
-    client_fin = await self.reader.read(4096)
-    self._tlsInBuff.write(client_fin)
-    try:
-      self._tlsObj.do_handshake()
-    except ssl.SSLWantReadError:
-      raise TLSHandshakeError("Expected more data in Clinet FIN")
+    async def do_tls_handshake(self):
+        """Run the handshake; ClientHello and Finished may arrive in any number of reads."""
+        while True:
+            try:
+                self._ssl.do_handshake()
+            except ssl.SSLWantReadError:
+                await self._flush()
+                await self._feed()
+                continue
+            except ssl.SSLError as exc:
+                await self._flush()  # deliver the alert, if any
+                raise TLSHandshakeError(f"[{type(exc).__name__}] {exc.reason}") from None
+            await self._flush()
+            return
 
-    server_fin = self._tlsOutBuff.read()
-    self.writer.write(server_fin)
-    await self.writer.drain()
+    @property
+    def version(self) -> str:
+        return self._ssl.version() or ""
 
-  async def write_tls(self, data):
-    self._tlsObj.write(data)
-    _data = self._tlsOutBuff.read()
-    _res = self.writer.write(_data)
-    await self.writer.drain()
-    return _res
+    async def write_tls(self, data):
+        self._ssl.write(data)
+        await self._flush()
 
-  async def read_tls(self, size):
-    data = b""
-    # Check if we have any leftover data in the buffer
-    try:
-      data += self._tlsObj.read(size)
-    except ssl.SSLWantReadError:
-      pass
-
-    # iterate until we have all needed plaintext
-    while len(data) < size:
-      if self.reader.at_eof():
-        break
-      try:
-        # read ciphertext
-        _rData = await self.reader.read(1)
-        # put ciphertext into SSL machine
-        self._tlsInBuff.write(_rData)
-        # try to fill plaintext buffer
-        data += self._tlsObj.read(size)
-      except ssl.SSLWantReadError:
-        pass
-
-    return data
+    async def read_tls(self, size):
+        """Read exactly `size` plaintext bytes (IncompleteReadError on EOF)."""
+        buf = b""
+        while len(buf) < size:
+            try:
+                chunk = self._ssl.read(size - len(buf))
+                if not chunk:
+                    raise asyncio.IncompleteReadError(buf, size)
+                buf += chunk
+            except ssl.SSLWantReadError:
+                try:
+                    await self._feed()
+                except TLSHandshakeError:
+                    raise asyncio.IncompleteReadError(buf, size) from None
+            except ssl.SSLZeroReturnError:
+                raise asyncio.IncompleteReadError(buf, size) from None
+        return buf

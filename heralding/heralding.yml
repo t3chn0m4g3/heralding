@@ -1,8 +1,28 @@
 # will request and log the public ip every hours from ipify
 public_ip_as_destination_ip: false
 
-# ip address to listen on
+# ip address(es) to listen on; a list binds several, e.g. for IPv4 + IPv6:
+#   bind_host: ["0.0.0.0", "::"]
 bind_host: 0.0.0.0
+
+# system profile the honeypot presents (banners, versions, host names, certificate subjects).
+# "random" picks one of the profiles in heralding/personas.yml once and keeps it in persona.state
+# (working directory) across restarts; or name one, e.g.
+# ubuntu-24.04, debian-12, rhel-9, windows-server-2019, windows-server-2022.
+# Any banner set explicitly below overrides the persona for that capability.
+persona: random
+
+# connection limits: new connections beyond these are closed immediately
+max_sessions: 800
+max_sessions_per_ip: 50
+
+# minimum TLS version for the *s capabilities (ssl.TLSVersion name); can be
+# overridden per capability in protocol_specific_data.tls_min_version
+tls_min_version: TLSv1_2
+
+# when started as root, drop to this user/group after binding the ports
+# user: nobody
+# group: nogroup
 
 # logging of sessions and authentication attempts
 activity_logging:
@@ -46,8 +66,26 @@ capabilities:
     timeout: 30
     protocol_specific_data:
       max_attempts: 3
-      banner: "Microsoft FTP Server"
-      syst_type: "Windows-NT"
+      banner: ""
+      syst_type: ""
+
+  ftps:
+    enabled: true
+    port: 990
+    timeout: 30
+    protocol_specific_data:
+      max_attempts: 3
+      banner: ""
+      syst_type: ""
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
+        valid_days: 365
+        serial_number: 0
 
   telnet:
     enabled: true
@@ -62,7 +100,7 @@ capabilities:
     timeout: 30
     protocol_specific_data:
       max_attempts: 3
-      banner: "+OK POP3 server ready"
+      banner: ""
 
   pop3s:
     enabled: true
@@ -70,7 +108,7 @@ capabilities:
     timeout: 30
     protocol_specific_data:
       max_attempts: 3
-      banner: "+OK POP3 server ready"
+      banner: ""
       # if a .pem file is not found in work dir, a new pem file will be created
       # using these values
       cert:
@@ -95,7 +133,7 @@ capabilities:
     timeout: 30
     protocol_specific_data:
       max_attempts: 3
-      banner: "* OK IMAP4rev1 Server Ready"
+      banner: ""
 
   imaps:
     enabled: true
@@ -103,7 +141,7 @@ capabilities:
     timeout: 30
     protocol_specific_data:
       max_attempts: 3
-      banner: "* OK IMAP4rev1 Server Ready"
+      banner: ""
       # if a .pem file is not found in work dir, a new pem file will be created
       # using these values
       cert:
@@ -122,7 +160,7 @@ capabilities:
     port: 22
     timeout: 30
     protocol_specific_data:
-      banner: "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.8"
+      banner: ""
 
   http:
     enabled: true
@@ -155,7 +193,7 @@ capabilities:
     port: 25
     timeout: 30
     protocol_specific_data:
-      banner: "Microsoft ESMTP MAIL service ready"
+      banner: ""
       # If the fqdn option is commented out or empty, then fqdn of the host will be used
       fqdn: ""
 
@@ -164,7 +202,7 @@ capabilities:
     port: 465
     timeout: 30
     protocol_specific_data:
-      banner: "Microsoft ESMTP MAIL service ready"
+      banner: ""
       # If the fqdn option is commented out or empty, then fqdn of the host will be used
       fqdn: ""
       cert:
@@ -175,6 +213,23 @@ capabilities:
         organization: None
         organizational_unit: None
         # how many days should the certificate be valid for
+        valid_days: 365
+        serial_number: 0
+
+  submission:
+    enabled: true
+    port: 587
+    timeout: 30
+    protocol_specific_data:
+      banner: ""
+      fqdn: ""
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
         valid_days: 365
         serial_number: 0
 
@@ -192,13 +247,89 @@ capabilities:
     enabled: true
     port: 3306
     timeout: 30
+    protocol_specific_data:
+      # server version string in the greeting; empty = from persona
+      version: ""
     
+
+  redis:
+    enabled: true
+    port: 6379
+    timeout: 30
+    protocol_specific_data:
+      max_attempts: 10
+
+  sip:
+    enabled: true
+    port: 5060    # UDP and TCP
+    timeout: 30
+
+  mssql:
+    enabled: true
+    port: 1433
+    timeout: 30
+    protocol_specific_data:
+      # SQL Server version reported in PRELOGIN; empty = from persona
+      version: ""
+
+  ldap:
+    enabled: true
+    port: 389
+    timeout: 30
+    protocol_specific_data:
+      max_attempts: 10
+
+  ldaps:
+    enabled: true
+    port: 636
+    timeout: 30
+    protocol_specific_data:
+      max_attempts: 10
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
+        valid_days: 365
+        serial_number: 0
+
+  http_proxy:
+    enabled: true
+    port: 8080
+    timeout: 30
+    protocol_specific_data:
+      # Server header of the proxy; empty = from persona
+      banner: ""
+
+  mqtt:
+    enabled: true
+    port: 1883
+    timeout: 30
+
+  mqtts:
+    enabled: true
+    port: 8883
+    timeout: 30
+    protocol_specific_data:
+      cert:
+        common_name: "*"
+        country: "US"
+        state: None
+        locality: None
+        organization: None
+        organizational_unit: None
+        valid_days: 365
+        serial_number: 0
 
   rdp:
     enabled: true
     port: 3389
     timeout: 30
     protocol_specific_data:
+      # RDP defaults to TLS <= 1.2 for native-client interoperability.
+      # Set tls_max_version: TLSv1_3 to explicitly enable TLS 1.3.
       banner: ""
       # if a .pem file is not found in work dir, a new pem file will be created
       # using these values
@@ -212,3 +343,8 @@ capabilities:
         # how many days should the certificate be valid for
         valid_days: 365
         serial_number: 0
+
+  smb:
+    enabled: true
+    port: 445
+    timeout: 30

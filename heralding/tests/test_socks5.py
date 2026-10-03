@@ -1,71 +1,72 @@
-# Copyright (C) 2018 Roman Samoilenko <ttahabatt@gmail.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 import asyncio
-import unittest
+
+import pytest
 
 import heralding.capabilities.socks5 as socks
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.tests.conftest import make_options
 
 
-class Socks5Tests(unittest.TestCase):
+def _socks_connect(host, port, username, password):
+    from python_socks import ProxyError, ProxyType
+    from python_socks.sync import Proxy
 
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
+    proxy = Proxy.create(ProxyType.SOCKS5, host, port, username=username, password=password)
+    try:
+        proxy.connect(dest_host="example.org", dest_port=80, timeout=5)
+    except ProxyError as exc:
+        return str(exc)
+    return None
 
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
 
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
+@pytest.mark.parametrize("password", ["proxypass"])
+async def test_socks5_credentials_are_logged_with_standard_client(serve, sink, password):
+    host, port = await serve(socks.Socks5(make_options()))
+    error = await asyncio.to_thread(_socks_connect, host, port, "proxyuser", password)
+    assert error is not None  # authentication refused, nothing forwarded
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert (attempt["username"], attempt["password"]) == ("proxyuser", password)
+    assert attempt["protocol"] == "socks5"
+    ended = await asyncio.to_thread(sink.wait_for_session_end, 1)
+    assert "USERNAME/PASSWORD" in ended[0]["auxiliary_data"]["client_auth_methods"]
 
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
 
-    self.loop.close()
+@pytest.mark.parametrize("password", ["", "secret"])
+async def test_library_auth_with_empty_password_and_fragmented_transport(serve, sink, password):
+    import socket
 
-  def test_socks_authentication(self):
+    from python_socks._protocols.socks5 import (
+        AuthMethodsRequest,
+        AuthRequest,
+        Connection,
+        ReplyError,
+    )
 
-    async def socks_auth():
-      reader, writer = await asyncio.open_connection(
-          '127.0.0.1', 8888, loop=self.loop)
+    host, port = await serve(socks.Socks5(make_options()))
 
-      # Greeting to the server. version+authmethod number+authmethod
-      client_greeting = socks.SOCKS_VERSION + b"\x01" + socks.AUTH_METHOD
-      writer.write(client_greeting)
+    def run():
+        protocol = Connection()
+        with socket.create_connection((host, port), timeout=5) as stream:
+            # The client's protocol API builds and parses messages. Only the transport
+            # fragments them; no protocol fields are assembled in the test.
+            def send(request):
+                for byte in protocol.send(request):
+                    stream.sendall(bytes([byte]))
 
-      # Receive version+chosen authmethod
-      _ = await reader.read(2)
+            def receive():
+                data = bytearray()
+                while len(data) < 2:
+                    chunk = stream.recv(2 - len(data))
+                    if not chunk:
+                        raise EOFError
+                    data.extend(chunk)
+                return protocol.receive(bytes(data))
 
-      # Send credentials.
-      # version+username len+username+password len+password
-      credentials = b"\x05\x08username\x08password"
-      writer.write(credentials)
+            send(AuthMethodsRequest("proxyuser", "advertise-password-auth"))
+            receive()
+            send(AuthRequest("proxyuser", password))
+            with pytest.raises(ReplyError, match="authentication failure"):
+                receive()
 
-      # Receive authmethod+\xff
-      res = await reader.read(2)
-      self.assertEqual(res, socks.AUTH_METHOD + socks.SOCKS_FAIL)
-
-    options = {'enabled': 'True', 'port': 8888, 'timeout': 30}
-    capability = socks.Socks5(options, self.loop)
-
-    server_coro = asyncio.start_server(
-        capability.handle_session, '127.0.0.1', 8888, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
-    self.loop.run_until_complete(socks_auth())
+    await asyncio.to_thread(run)
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert (attempt["username"], attempt["password"]) == ("proxyuser", password)

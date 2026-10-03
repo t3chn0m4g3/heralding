@@ -1,91 +1,153 @@
-# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 import asyncio
-import unittest
 
-import telnetlib
+import telnetlib3
 
 from heralding.capabilities import telnet
-from heralding.misc.common import cancel_all_pending_tasks
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.tests.conftest import make_options
 
 
-class TelnetTests(unittest.TestCase):
+async def _read_until(reader, writer, needle: bytes, timeout: float = 5.0) -> bytes:
+    data = bytearray()
+    async with asyncio.timeout(timeout):
+        while needle.lower() not in bytes(data).lower():
+            chunk = await reader.read(256)
+            if not chunk:
+                break
+            data.extend(chunk)
+    return bytes(data)
 
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
 
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
+async def _connect(host, port):
+    return await telnetlib3.open_connection(
+        host, port, encoding=False, connect_minwait=0.01, connect_maxwait=0.05
+    )
 
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
 
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
+async def test_invalid_login(serve, sink):
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await _connect(host, port)
 
-    self.loop.run_until_complete(cancel_all_pending_tasks(self.loop))
-    self.loop.close()
+    prompt = await _read_until(reader, writer, b"Username: ")
+    assert b"Username: " in prompt
+    writer.write(b"someuser\r\n")
+    await writer.drain()
+    prompt = await _read_until(reader, writer, b"Password: ")
+    assert prompt.endswith(b"Password: ")
+    writer.write(b"somepass\r\n")
+    await writer.drain()
 
-  def test_invalid_login(self):
-    """Tests if telnet server responds correctly to a invalid login attempt."""
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
+    assert (attempts[0]["username"], attempts[0]["password"]) == ("someuser", "somepass")
+    writer.close()
 
-    def telnet_login():
-      client = telnetlib.Telnet('localhost', 2503)
-      # set this to 1 if having problems with this test
-      client.set_debuglevel(0)
-      # this disables all command negotiation.
-      client.set_option_negotiation_callback(self.cb)
-      # Expect username as first output
 
-      reply = client.read_until(b'Username: ', 1)
-      self.assertEqual(b'Username: ', reply)
+async def test_overlong_line_is_truncated_not_fatal(serve, sink, caplog):
+    import logging
 
-      client.write(b'someuser' + b'\r\n')
-      reply = client.read_until(b'Password: ', 5)
-      self.assertTrue(reply.endswith(b'Password: '))
+    caplog.set_level(logging.WARNING)
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await _connect(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"A" * 5000 + b"\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.write(b"p\r\n")
+    await writer.drain()
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert len(attempt["username"]) == 1024
+    writer.close()
+    await asyncio.sleep(0.3)
+    # no asyncio "socket.send() raised exception." spam after the client is gone
+    assert sum("socket.send()" in rec.getMessage() for rec in caplog.records) == 0
 
-      client.write(b'somepass' + b'\r\n')
-      reply = client.read_until(b'\n', 5)
-      self.assertTrue(b'\n' in reply)
 
-      client.close()
+async def test_default_login_prompts(serve, sink):
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await _connect(host, port)
+    data = await _read_until(reader, writer, b"sername:")
+    assert b"username:" in data.lower()
+    writer.write(b"u\r\n")
+    await writer.drain()
+    data = await _read_until(reader, writer, b"assword:")
+    assert b"password:" in data.lower()
+    writer.close()
 
-    options = {
-        'enabled': 'True',
-        'port': 2503,
-        'protocol_specific_data': {
-            'max_attempts': 3
-        },
-        'users': {
-            'test': 'test'
-        }
-    }
-    telnet_cap = telnet.Telnet(options, self.loop)
 
-    server_coro = asyncio.start_server(
-        telnet_cap.handle_session, '0.0.0.0', 2503, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
+async def test_latin1_password_is_logged(serve, sink):
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await _connect(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"u\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.write(b"p\xe4\r\n")
+    await writer.drain()
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["password"] == "p\\xe4"
+    writer.close()
 
-    telnet_task = self.loop.run_in_executor(None, telnet_login)
-    self.loop.run_until_complete(telnet_task)
 
-  def cb(self, socket, command, option):
-    return
+async def test_max_attempts_is_per_capability_instance(serve, sink):
+    cap_two = telnet.Telnet(make_options(max_attempts=2))
+    cap_five = telnet.Telnet(make_options(max_attempts=5))
+    assert cap_two.max_tries == 2
+    assert cap_five.max_tries == 5
+    host, port = await serve(cap_two)
+    reader, writer = await _connect(host, port)
+    for i in range(2):
+        await _read_until(reader, writer, b"Username: ")
+        writer.write(f"u{i}\r\n".encode())
+        await writer.drain()
+        await _read_until(reader, writer, b"Password: ")
+        writer.write(b"p\r\n")
+        await writer.drain()
+    # after max_attempts the server closes the connection
+    tail = await asyncio.wait_for(reader.read(), 5)
+    assert b"Username: " in tail  # the Hydra-friendly final prompt
+    writer.close()
+    assert len(await asyncio.to_thread(sink.wait_for_auth, 2)) == 2
+
+
+async def test_client_disconnect_ends_session_promptly(serve, sink):
+    from heralding.capabilities.handlerbase import HandlerBase
+
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await _connect(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"u\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.write(b"p\r\n")
+    await writer.drain()
+    await asyncio.to_thread(sink.wait_for_auth, 1)
+    writer.close()
+    await writer.wait_closed()
+    for _ in range(40):  # must not wait for the 30 s session timeout
+        if HandlerBase.global_sessions == 0:
+            break
+        await asyncio.sleep(0.05)
+    assert HandlerBase.global_sessions == 0
+
+
+async def test_disconnect_at_password_prompt_ends_session(serve, sink):
+    from heralding.capabilities.handlerbase import HandlerBase
+
+    cap = telnet.Telnet(make_options(max_attempts=3))
+    host, port = await serve(cap)
+    reader, writer = await _connect(host, port)
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"u\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.close()  # leave while the server waits for the password
+    await writer.wait_closed()
+    for _ in range(40):
+        if HandlerBase.global_sessions == 0:
+            break
+        await asyncio.sleep(0.05)
+    assert HandlerBase.global_sessions == 0

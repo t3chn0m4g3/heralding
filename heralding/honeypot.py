@@ -13,235 +13,266 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
-import ssl
-import logging
 import asyncio
+import logging
+import os
+import socket
+import ssl
 
+import heralding.capabilities  # noqa: F401  registers all capabilities
 import heralding.misc.common as common
-import heralding.capabilities.handlerbase
-
-from heralding.reporting.reporting_relay import ReportingRelay
-from heralding.reporting.file_logger import FileLogger
-from heralding.reporting.syslog_logger import SyslogLogger
-from heralding.reporting.hpfeeds_logger import HpFeedsLogger
-from heralding.reporting.curiosum_integration import CuriosumIntegration
-
-import asyncssh
+from heralding.capabilities import smtp, ssh
+from heralding.capabilities.handlerbase import HandlerBase
+from heralding.misc import certs, persona
+from heralding.reporting.hub import get_hub
 
 logger = logging.getLogger(__name__)
 
 
 class Honeypot:
-  public_ip = ''
-  wordlist = None
+    public_ip = ""
+    wordlist = None
 
-  def __init__(self, config, loop):
-    """
+    def __init__(self, config):
+        """
         :param config: configuration dictionary.
         """
-    assert config is not None
-    self.loop = loop
-    self.SshClass = None
-    self.config = config
-    self._servers = []
-    self._loggers = []
+        assert config is not None
+        self.config = config
+        self._servers = []
+        self._datagram_transports = []
+        self._capabilities = []
+        self.public_ip_task = None
+        self._fqdn_task = None
+        self.persona = None
 
-  async def _record_and_lookup_public_ip(self):
-    while True:
-      try:
-        Honeypot.public_ip = common.get_public_ip()
-        logger.warning('Found public ip: %s', Honeypot.public_ip)
-      except Exception as ex:
-        Honeypot.public_ip = ''
-        logger.warning('Could not request public ip from ipify, error: %s', ex)
-      await asyncio.sleep(3600)
+    async def _refresh_fqdn(self):
+        while True:
+            try:
+                smtp.set_fqdn(await asyncio.to_thread(socket.getfqdn), source="lookup")
+            except Exception as exc:
+                logger.debug("getfqdn failed [%s] %s", type(exc).__name__, exc)
+            await asyncio.sleep(1800)
 
-  def setup_wordlist(self):
-    # load wordlist in memory
-    wordlist_file = self.config['hash_cracker']['wordlist_file']
-    if not os.path.isfile(wordlist_file):
-      package_directory = os.path.dirname(os.path.abspath(heralding.__file__))
-      wordlist_file = os.path.join(package_directory, wordlist_file)
-      logger.warning(
-          'Using default wordlist file: "{0}", if you want to customize values please '
-          'copy this file to the current working directory'.format(
-              wordlist_file))
-    with open(wordlist_file, 'r') as f:
-      Honeypot.wordlist = f.read().splitlines()
+    def _needs_fqdn_lookup(self) -> bool:
+        if self.persona is not None:
+            return False  # the persona owns the host name; never leak the real one
+        for name in ("smtp", "smtps"):
+            cfg = self.config["capabilities"].get(name) or {}
+            if cfg.get("enabled") and not (cfg.get("protocol_specific_data") or {}).get("fqdn"):
+                return True
+        return False
 
-  def start(self):
-    """ Starts services. """
-
-    if 'public_ip_as_destination_ip' in self.config and self.config[
-        'public_ip_as_destination_ip'] is True:
-      asyncio.ensure_future(self._record_and_lookup_public_ip())
-
-    # setup hash cracker's wordlist
-    if self.config['hash_cracker']['enabled']:
-      self.setup_wordlist()
-
-    # start activity logging
-    if 'activity_logging' in self.config:
-      if 'file' in self.config['activity_logging'] and self.config[
-          'activity_logging']['file']['enabled']:
-        auth_log = self.config['activity_logging']['file'][
-            'authentication_log_file']
-        session_csv_log = self.config['activity_logging']['file'][
-            'session_csv_log_file']
-        session_json_log = self.config['activity_logging']['file'][
-            'session_json_log_file']
-        file_logger = FileLogger(session_csv_log, session_json_log, auth_log)
-        self.file_logger_task = self.loop.run_in_executor(
-            None, file_logger.start)
-        self.file_logger_task.add_done_callback(
-            common.on_unhandled_task_exception)
-        self._loggers.append(file_logger)
-
-      if 'syslog' in self.config['activity_logging'] and self.config[
-          'activity_logging']['syslog']['enabled']:
-        sys_logger = SyslogLogger()
-        self.sys_logger_task = self.loop.run_in_executor(None, sys_logger.start)
-        self.sys_logger_task.add_done_callback(
-            common.on_unhandled_task_exception)
-        self._loggers.append(sys_logger)
-
-      if 'hpfeeds' in self.config['activity_logging'] and self.config[
-          'activity_logging']['hpfeeds']['enabled']:
-        session_channel = self.config['activity_logging']['hpfeeds'][
-            'session_channel']
-        auth_channel = self.config['activity_logging']['hpfeeds'][
-            'auth_channel']
-        host = self.config['activity_logging']['hpfeeds']['host']
-        port = self.config['activity_logging']['hpfeeds']['port']
-        ident = self.config['activity_logging']['hpfeeds']['ident']
-        secret = self.config['activity_logging']['hpfeeds']['secret']
-        hpfeeds_logger = HpFeedsLogger(session_channel, auth_channel, host,
-                                       port, ident, secret)
-        self.hpfeeds_logger_task = self.loop.run_in_executor(
-            None, hpfeeds_logger.start)
-        self.hpfeeds_logger_task.add_done_callback(
-            common.on_unhandled_task_exception)
-
-      if 'curiosum' in self.config['activity_logging'] and self.config[
-          'activity_logging']['curiosum']['enabled']:
-        port = self.config['activity_logging']['curiosum']['port']
-        curiosum_integration = CuriosumIntegration(port)
-        self.hpfeeds_logger_task = self.loop.run_in_executor(
-            None, curiosum_integration.start)
-        self.hpfeeds_logger_task.add_done_callback(
-            common.on_unhandled_task_exception)
-
-    bind_host = self.config['bind_host']
-    listen_ports = []
-    for c in heralding.capabilities.handlerbase.HandlerBase.__subclasses__():
-      cap_name = c.__name__.lower()
-      if cap_name in self.config['capabilities']:
-        if not self.config['capabilities'][cap_name]['enabled']:
-          continue
-        port = self.config['capabilities'][cap_name]['port']
-        listen_ports.append(port)
-        # carve out the options for this specific service
-        options = self.config['capabilities'][cap_name]
-        # capabilities are only allowed to append to the session list
-        cap = c(options)
+    async def _lookup_public_ip_once(self):
+        """Refresh Honeypot.public_ip; on failure keep the last good value."""
         try:
-          # # Convention: All capability names which end in 's' will be wrapped in ssl.
-          if cap_name.endswith('s'):
-            pem_file = '{0}.pem'.format(cap_name)
-            self.create_cert_if_not_exists(cap_name, pem_file)
-            ssl_context = self.create_ssl_context(pem_file)
-            server_coro = asyncio.start_server(
-                cap.handle_session,
-                bind_host,
-                port,
-                ssl=ssl_context)
-          elif cap_name == 'ssh':
-            # Since dicts and user-defined classes are mutable, we have
-            # to save ssh class and ssh options somewhere.
-            ssh_options = options
-            SshClass = c
-            self.SshClass = SshClass
+            Honeypot.public_ip = await asyncio.to_thread(common.get_public_ip)
+            logger.info("Found public ip: %s", Honeypot.public_ip)
+        except Exception as exc:
+            logger.warning(
+                "Could not determine public ip [%s] %s (keeping %r)",
+                type(exc).__name__,
+                exc,
+                Honeypot.public_ip,
+            )
 
-            ssh_key_file = 'ssh.key'
-            SshClass.generate_ssh_key(ssh_key_file)
+    async def _record_and_lookup_public_ip(self):
+        while True:
+            await self._lookup_public_ip_once()
+            await asyncio.sleep(3600)
 
-            banner = ssh_options['protocol_specific_data']['banner']
-            SshClass.change_server_banner(banner)
+    def setup_wordlist(self):
+        # load wordlist in memory
+        wordlist_file = self.config["hash_cracker"]["wordlist_file"]
+        if not os.path.isfile(wordlist_file):
+            package_directory = os.path.dirname(os.path.abspath(heralding.__file__))
+            wordlist_file = os.path.join(package_directory, wordlist_file)
+            logger.warning(
+                f'Using default wordlist file: "{wordlist_file}", if you want to customize values please '
+                "copy this file to the current working directory"
+            )
+        with open(wordlist_file) as f:
+            Honeypot.wordlist = f.read().splitlines()
 
-            server_coro = asyncssh.create_server(
-                lambda: SshClass(ssh_options),
-                bind_host,
-                port,
-                server_host_keys=[ssh_key_file],
-                login_timeout=cap.timeout)
-          elif cap_name == 'rdp':
-            pem_file = '{0}.pem'.format(cap_name)
-            self.create_cert_if_not_exists(cap_name, pem_file)
-            server_coro = asyncio.start_server(
-                cap.handle_session, bind_host, port)
-          else:
-            server_coro = asyncio.start_server(
-                cap.handle_session, bind_host, port)
+    async def start(self):
+        """Starts services."""
 
-          server = self.loop.run_until_complete(server_coro)
-          logger.debug('Adding %s capability with options: %s', cap_name,
-                       options)
-          self._servers.append(server)
-        except Exception as ex:
-          error_message = "Could not start {0} server on port {1}. Error: {2}".format(
-              c.__name__, port, ex)
-          logger.error(error_message)
-          raise ex
-        else:
-          logger.info('Started %s capability listening on port %s', c.__name__,
-                      port)
-    ReportingRelay.logListenPorts(listen_ports)
+        HandlerBase.configure_limits(
+            self.config.get("max_sessions", 800), self.config.get("max_sessions_per_ip", 50)
+        )
+        self.persona = persona.select_persona(self.config, state_path="persona.state")
+        HandlerBase.set_persona(self.persona)
+        smtp.set_fqdn(self.persona.fqdn, source="persona")
+        logger.info("Persona: %s (%s)", self.persona.name, self.persona.fqdn)
 
-  def stop(self):
-    """Stops services"""
-    if self.config['capabilities']['ssh']['enabled'] and self.SshClass != None:
-      for conn in self.SshClass.connections_list:
-        conn.close()
-        self.loop.run_until_complete(conn.wait_closed())
+        if self.config.get("public_ip_as_destination_ip") is True:
+            self.public_ip_task = asyncio.create_task(self._record_and_lookup_public_ip())
 
-    for server in self._servers:
-      server.close()
-      self.loop.run_until_complete(server.wait_closed())
+        if self._needs_fqdn_lookup():
+            self._fqdn_task = asyncio.create_task(self._refresh_fqdn())
 
-    for l in self._loggers:
-      l.stop()
+        # setup hash cracker's wordlist
+        if self.config["hash_cracker"]["enabled"]:
+            self.setup_wordlist()
 
-    self.loop.run_until_complete(common.cancel_all_pending_tasks(self.loop))
+        bind_host = self.config["bind_host"]
+        listen_ports = []
+        for cap_name, cls in HandlerBase.registry().items():
+            cap_cfg = self.config["capabilities"].get(cap_name)
+            if not cap_cfg or not cap_cfg.get("enabled"):
+                continue
+            port = int(cap_cfg["port"])
+            cap = cls(cap_cfg)
+            self._capabilities.append(cap)
+            ssl_context = None
+            if cls.TLS == "implicit" or (cls.NEEDS_CERT and cls.TLS != "starttls"):
+                psd = cap_cfg.get("protocol_specific_data") or {}
+                pem_file = certs.ensure_cert(
+                    f"{cap_name}.pem",
+                    self._cert_subject(psd.get("cert")),
+                    persona_tag=self.persona.fqdn,
+                )
+                if cls.TLS == "implicit":
+                    min_version = psd.get("tls_min_version") or self.config.get(
+                        "tls_min_version", "TLSv1_2"
+                    )
+                    ssl_context = self.create_ssl_context(pem_file, min_version)
+                elif cap_name == "rdp":
+                    import warnings
 
-    logger.info('All tasks were stopped.')
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", DeprecationWarning)
+                        cap.tls_context = self.create_ssl_context(
+                            pem_file, cap.persona_value("tls_min_version", "TLSv1")
+                        )
+                    cap.tls_context.set_ciphers("DEFAULT:@SECLEVEL=0")
+                    # RDP client implementations do not all support CredSSP
+                    # over TLS 1.3. Use TLS 1.2 unless explicitly configured.
+                    from heralding.misc.tls import maximum_version
 
-  def create_cert_if_not_exists(self, cap_name, pem_file):
-    if not os.path.isfile(pem_file):
-      logger.debug('Generating certificate and key: %s', pem_file)
+                    maximum = psd.get("tls_max_version")
+                    cap.tls_context.maximum_version = (
+                        maximum_version(maximum)
+                        if maximum
+                        else max(ssl.TLSVersion.TLSv1_2, cap.tls_context.minimum_version)
+                    )
+                    logger.info(
+                        "RDP TLS versions: %s through %s",
+                        cap.tls_context.minimum_version.name,
+                        cap.tls_context.maximum_version.name,
+                    )
+            if cls.TLS == "starttls" or getattr(cls, "OFFER_AUTH_TLS", False):
+                self._attach_starttls(cap, cap_name, cap_cfg)
+            try:
+                server = await cap.create_server(bind_host, port, ssl_context)
+            except OSError as exc:
+                logger.error(
+                    "Could not start %s on port %s [%s] %s",
+                    cap_name,
+                    port,
+                    type(exc).__name__,
+                    exc,
+                )
+                raise
+            logger.debug("Adding %s capability with options: %s", cap_name, cap_cfg)
+            self._servers.append(server)
+            # Port zero is useful for collision-free local clients and tests.
+            bound_ports = sorted({sock.getsockname()[1] for sock in server.sockets})
+            listen_ports.extend(bound_ports)
+            logger.info("Started %s capability listening on port %s", cap_name, bound_ports[0])
+            if "udp" in cls.TRANSPORT:
+                hosts = bind_host if isinstance(bind_host, list) else [bind_host]
+                for host in hosts:
+                    try:
+                        transport, _ = await cap.create_datagram_endpoint(
+                            host, port or bound_ports[0]
+                        )
+                    except OSError as exc:
+                        logger.error(
+                            "Could not start %s on udp port %s [%s] %s",
+                            cap_name,
+                            port,
+                            type(exc).__name__,
+                            exc,
+                        )
+                        raise
+                    self._datagram_transports.append(transport)
+                logger.info(
+                    "Started %s capability listening on udp port %s",
+                    cap_name,
+                    port or bound_ports[0],
+                )
+        get_hub().emit_listen_ports(listen_ports)
 
-      cert_dict = self.config['capabilities'][cap_name][
-          'protocol_specific_data']['cert']
-      cert_cn = cert_dict['common_name']
-      cert_country = cert_dict['country']
-      cert_state = cert_dict['state']
-      cert_locality = cert_dict['locality']
-      cert_org = cert_dict['organization']
-      cert_org_unit = cert_dict['organizational_unit']
-      valid_days = int(cert_dict['valid_days'])
-      serial_number = int(cert_dict['serial_number'])
+    async def stop(self):
+        """Stops services"""
+        for task in (self.public_ip_task, self._fqdn_task):
+            if task is not None:
+                task.cancel()
 
-      cert, key = common.generate_self_signed_cert(cert_country, cert_state,
-                                                   cert_org, cert_locality,
-                                                   cert_org_unit, cert_cn,
-                                                   valid_days, serial_number)
-      with open(pem_file, 'wb') as _pem_file:
-        _pem_file.write(cert)
-        _pem_file.write(key)
+        for conn in list(ssh.SSH.connections):
+            conn.close()
+            try:
+                await asyncio.wait_for(conn.wait_closed(), timeout=2)
+            except TimeoutError:
+                pass
 
-  @staticmethod
-  def create_ssl_context(pem_file):
-    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    ssl_context.check_hostname = False
-    ssl_context.load_cert_chain(pem_file)
-    return ssl_context
+        for cap in self._capabilities:
+            if hasattr(cap, "close_datagram_sessions"):
+                cap.close_datagram_sessions()
+        for transport in self._datagram_transports:
+            transport.close()
+        for server in self._servers:
+            server.close()  # stop accepting
+        for server in self._servers:
+            server.close_clients()  # drop attackers still connected; sessions end normally
+        for server in self._servers:
+            try:
+                await asyncio.wait_for(server.wait_closed(), timeout=5)
+            except TimeoutError:
+                logger.debug("Server on %s did not close in time", server.sockets)
+
+        await common.cancel_all_pending_tasks()
+
+        logger.info("All tasks were stopped.")
+
+    def _attach_starttls(self, cap, cap_name, cap_cfg):
+        """Build the in-band TLS context once; a broken certificate disables only the upgrade."""
+        psd = cap_cfg.get("protocol_specific_data") or {}
+        try:
+            pem_file = certs.ensure_cert(
+                f"{cap_name}.pem",
+                self._cert_subject(psd.get("cert")),
+                persona_tag=self.persona.fqdn,
+            )
+            min_version = psd.get("tls_min_version") or self.config.get(
+                "tls_min_version", "TLSv1_2"
+            )
+            cap.starttls_context = self.create_ssl_context(pem_file, min_version)
+        except (OSError, ValueError, AttributeError, ssl.SSLError) as exc:
+            cap.starttls_context = None
+            logger.warning(
+                "%s: STARTTLS / AUTH TLS disabled, certificate not usable [%s] %s",
+                cap_name,
+                type(exc).__name__,
+                exc,
+            )
+
+    def _cert_subject(self, cert_cfg):
+        """Explicit certificate subject fields win; unset ones ("None", "", "*") come from the persona."""
+        merged = dict(cert_cfg or {})
+        for key, value in self.persona.cert_subject.items():
+            current = merged.get(key)
+            if certs.is_unset(current) or (key == "common_name" and current == "*"):
+                if value:
+                    merged[key] = value
+        return merged
+
+    @staticmethod
+    def create_ssl_context(pem_file, min_version="TLSv1_2"):
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        from heralding.misc.tls import minimum_version
+
+        ssl_context.minimum_version = minimum_version(min_version)
+        ssl_context.load_cert_chain(pem_file)
+        return ssl_context

@@ -1,0 +1,147 @@
+# Coherent system profiles. One is picked at start-up (config key `persona`, default "random").
+# Explicit, non-empty values in heralding.yml always override these.
+# {hostname}, {domain} and {netbios} are filled in per start.
+ubuntu-24.04:
+  os_family: linux
+  domain: internal
+  hostname_pattern: "{role}-{n2}"
+  roles: [mail, web, db, app, srv]
+  netbios: ""
+  cert:
+    country: ""
+    state: ""
+    locality: ""
+    organization: ""
+    organizational_unit: ""
+    common_name: "{hostname}.{domain}"
+  capabilities:
+    ftp: { banner: "ProFTPD 1.3.8b Server ({hostname})", syst_type: "UNIX Type: L8" }
+    telnet: {}
+    pop3: { banner: "+OK Dovecot (Ubuntu) ready." }
+    imap: { banner: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN] Dovecot (Ubuntu) ready." }
+    smtp: { banner: "{hostname}.{domain} ESMTP Postfix (Ubuntu)" }
+    http: { banner: "nginx/1.24.0 (Ubuntu)" }
+    http_proxy: { banner: "squid/5.7" }
+    ssh: { banner: "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.5" }
+    mysql: { version: "8.0.37-0ubuntu0.24.04.1" }
+    ldap: { vendor_name: "OpenLDAP", vendor_version: "2.6.7", naming_context: "dc=internal" }
+    mssql: { version: "15.0.4236.7" }
+    sip: { user_agent: "Asterisk PBX 20.8.1" }
+    vnc: {}
+    rdp: {}
+
+debian-12:
+  os_family: linux
+  domain: lan
+  hostname_pattern: "{role}{n1}"
+  roles: [mail, www, db, node, host]
+  netbios: ""
+  cert:
+    country: ""
+    state: ""
+    locality: ""
+    organization: ""
+    organizational_unit: ""
+    common_name: "{hostname}.{domain}"
+  capabilities:
+    ftp: { banner: "ProFTPD Server ({hostname}) [::ffff:0.0.0.0]", syst_type: "UNIX Type: L8" }
+    telnet: {}
+    pop3: { banner: "+OK Dovecot (Debian) ready." }
+    imap: { banner: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN] Dovecot (Debian) ready." }
+    smtp: { banner: "{hostname}.{domain} ESMTP Postfix (Debian/GNU)" }
+    http: { banner: "Apache/2.4.62 (Debian)" }
+    http_proxy: { banner: "squid/5.7" }
+    ssh: { banner: "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3" }
+    mysql: { version: "10.11.6-MariaDB-0+deb12u1" }
+    ldap: { vendor_name: "OpenLDAP", vendor_version: "2.5.13", naming_context: "dc=lan" }
+    mssql: { version: "16.0.4125.3" }
+    sip: { user_agent: "Asterisk PBX 18.20.1~dfsg+~cs6.13.40431414-1" }
+    vnc: {}
+    rdp: {}
+
+rhel-9:
+  os_family: linux
+  domain: corp.local
+  hostname_pattern: "rh{role}{n2}"
+  roles: [mail, web, db, app]
+  netbios: ""
+  cert:
+    country: "US"
+    state: ""
+    locality: ""
+    organization: ""
+    organizational_unit: ""
+    common_name: "{hostname}.{domain}"
+  capabilities:
+    ftp: { banner: "(vsFTPd 3.0.5)", syst_type: "UNIX Type: L8" }
+    telnet: {}
+    pop3: { banner: "+OK Dovecot ready." }
+    imap: { banner: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN] Dovecot ready." }
+    smtp: { banner: "{hostname}.{domain} ESMTP Postfix" }
+    http: { banner: "Apache/2.4.57 (Red Hat Enterprise Linux)" }
+    http_proxy: { banner: "squid/5.7" }
+    ssh: { banner: "SSH-2.0-OpenSSH_8.7" }
+    mysql: { version: "8.0.36" }
+    ldap: { vendor_name: "389 Project", vendor_version: "389-Directory/2.4.5", naming_context: "dc=corp,dc=local" }
+    mssql: { version: "16.0.4125.3" }
+    sip: { user_agent: "FreeSWITCH-mod_sofia/1.10.11-release~64bit" }
+    vnc: {}
+    rdp: {}
+
+windows-server-2019:
+  os_family: windows
+  domain: corp.local
+  hostname_pattern: "{role}{n2}"
+  roles: [DC, FS, EX, SQL, APP, RDS]
+  netbios: "{hostname}"
+  cert:
+    country: ""
+    state: ""
+    locality: ""
+    organization: ""
+    organizational_unit: ""
+    common_name: "{hostname}.{domain}"
+  capabilities:
+    ftp: { banner: "Microsoft FTP Service", syst_type: "Windows_NT" }
+    telnet: {}
+    pop3: { banner: "+OK Microsoft Exchange Server 2019 POP3 service ready" }
+    imap: { banner: "* OK The Microsoft Exchange IMAP4 service is ready." }
+    smtp: { banner: "{hostname}.{domain} Microsoft ESMTP MAIL Service ready" }
+    http: { banner: "Microsoft-IIS/10.0" }
+    http_proxy: { banner: "Microsoft-HTTPAPI/2.0" }
+    ssh: { banner: "SSH-2.0-OpenSSH_for_Windows_8.1" }
+    mysql: { version: "8.0.31" }
+    ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.17763", naming_context: "DC=corp,DC=local" }
+    mssql: { version: "15.0.2000.5" }
+    sip: { user_agent: "3CX PhoneSystem 18.0.9.37" }
+    vnc: {}
+    rdp: {}
+
+windows-server-2022:
+  os_family: windows
+  domain: ad.local
+  hostname_pattern: "{role}-{n2}"
+  roles: [DC, FS, EX, SQL, APP, RDS, TS]
+  netbios: "{hostname}"
+  cert:
+    country: ""
+    state: ""
+    locality: ""
+    organization: ""
+    organizational_unit: ""
+    common_name: "{hostname}.{domain}"
+  capabilities:
+    ftp: { banner: "Microsoft FTP Service", syst_type: "Windows_NT" }
+    telnet: {}
+    pop3: { banner: "+OK Microsoft Exchange Server 2019 POP3 service ready" }
+    imap: { banner: "* OK The Microsoft Exchange IMAP4 service is ready." }
+    smtp: { banner: "{hostname}.{domain} Microsoft ESMTP MAIL Service ready" }
+    http: { banner: "Microsoft-IIS/10.0" }
+    http_proxy: { banner: "Microsoft-HTTPAPI/2.0" }
+    ssh: { banner: "SSH-2.0-OpenSSH_for_Windows_9.5" }
+    mysql: { version: "8.0.36" }
+    ldap: { vendor_name: "Microsoft Active Directory", vendor_version: "10.0.20348", naming_context: "DC=ad,DC=local" }
+    mssql: { version: "16.0.1000.6" }
+    sip: { user_agent: "3CX PhoneSystem 20.0.2.945" }
+    vnc: {}
+    rdp: {}

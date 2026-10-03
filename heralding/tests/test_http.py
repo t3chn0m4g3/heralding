@@ -1,70 +1,80 @@
-# Copyright (C) 2012 Aniket Panse <contact@aniketpanse.in
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-# Aniket Panse <contact@aniketpanse.in> grants Johnny Vestergaard <jkv@unixcluster.dk>
-# a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-# copyright license to reproduce, prepare derivative works of, publicly
-# display, publicly perform, sublicense, relicense, and distribute [the] Contributions
-# and such derivative works.
-
 import asyncio
-import unittest
-
-from heralding.capabilities import http
-from heralding.reporting.reporting_relay import ReportingRelay
-
+import base64
 import http.client as httpclient
 
+from heralding.capabilities import http as http_capability
+from heralding.tests.conftest import make_options
 
-class HttpTests(unittest.TestCase):
 
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
+def _get(host, port, path="/", headers=None, method="GET", body=None):
+    client = httpclient.HTTPConnection(host, port, timeout=5)
+    client.request(method, path, body=body, headers=headers or {})
+    response = client.getresponse()
+    data = response.read()
+    client.close()
+    return response.status, dict(response.getheaders()), data
 
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
 
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
+async def test_unauthenticated_request_gets_401(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="")))
+    status, headers, _ = await asyncio.to_thread(_get, host, port)
+    assert status == 401
+    assert headers["WWW-Authenticate"].startswith("Basic")
 
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
 
-    self.loop.close()
+async def test_basic_auth_is_logged(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="")))
+    token = base64.b64encode(b"james:bond").decode()
+    status, _, _ = await asyncio.to_thread(
+        _get, host, port, "/", {"Authorization": "Basic " + token}
+    )
+    assert status == 401
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
+    assert (attempts[0]["username"], attempts[0]["password"]) == ("james", "bond")
 
-  def test_connection(self):
-    """ Tests if the capability is up, and sending
-            HTTP 401 (Unauthorized) headers.
-        """
 
-    def http_request():
-      client = httpclient.HTTPConnection('127.0.0.1', 8888)
-      client.request('GET', '/')
-      response = client.getresponse()
-      self.assertEqual(response.status, 401)
+async def test_server_header_from_banner_and_no_credential_echo(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="Apache/2.4.58 (Ubuntu)")))
+    token = base64.b64encode(b"u:p:q").decode()
+    status, headers, body = await asyncio.to_thread(
+        _get, host, port, "/", {"Authorization": "Basic " + token}
+    )
+    assert status == 401
+    assert headers["Server"] == "Apache/2.4.58 (Ubuntu)"
+    assert "Python" not in headers["Server"]
+    assert b"Basic" not in body and token.encode() not in body
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert (attempt["username"], attempt["password"]) == ("u", "p:q")
 
-    options = {'enabled': 'True', 'port': 8888, 'users': {'test': 'test'}}
-    http_cap = http.Http(options, self.loop)
 
-    server_coro = asyncio.start_server(
-        http_cap.handle_session, '0.0.0.0', 8888, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
+async def test_default_server_header_does_not_reveal_python(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="")))
+    _, headers, _ = await asyncio.to_thread(_get, host, port)
+    assert "Python" not in headers["Server"]
+    assert "BaseHTTP" not in headers["Server"]
 
-    http_task = self.loop.run_in_executor(None, http_request)
-    self.loop.run_until_complete(http_task)
+
+async def test_bad_authorization_is_400(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="")))
+    status, _, _ = await asyncio.to_thread(_get, host, port, "/", {"Authorization": "Basic %%%"})
+    assert status == 400
+
+
+async def test_post_gets_401(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="")))
+    status, _, _ = await asyncio.to_thread(_get, host, port, "/login", None, "POST", b"x=1")
+    assert status == 401
+
+
+async def test_too_many_headers_is_431(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="")))
+    status, _, _ = await asyncio.to_thread(
+        _get, host, port, "/", {f"X-A-{i}": "b" for i in range(150)}
+    )
+    assert status == 431
+
+
+async def test_overlong_request_line_is_414(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="")))
+    status, _, _ = await asyncio.to_thread(_get, host, port, "/" + "a" * 9000)
+    assert status == 414

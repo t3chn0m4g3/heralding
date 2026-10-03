@@ -1,88 +1,61 @@
-# Copyright (C) 2017 Johnny Vestergaard <jkv@unixcluster.dk>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 import asyncio
-import unittest
+import poplib
+
+import pytest
 
 from heralding.capabilities.pop3 import Pop3
-from heralding.misc.common import cancel_all_pending_tasks
-from heralding.reporting.reporting_relay import ReportingRelay
+from heralding.tests.conftest import make_options
 
 
-class Pop3Tests(unittest.TestCase):
+async def test_login(serve, sink):
+    host, port = await serve(Pop3(make_options(max_attempts=3, banner="+OK POP3 server ready")))
 
-  def setUp(self):
-    self.loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
+    def run():
+        client = poplib.POP3(host, port, timeout=5)
+        try:
+            assert client.getwelcome().startswith(b"+OK")
+            assert client.user("wakkwakk") == b"+OK User accepted"
+            with pytest.raises(poplib.error_proto, match="Authentication failed"):
+                client.pass_("wakkwakk")
+            with pytest.raises(poplib.error_proto, match="Unknown command"):
+                client.retr(1)
+        finally:
+            client.close()
+        client = poplib.POP3(host, port, timeout=5)
+        try:
+            with pytest.raises(poplib.error_proto, match="No username given"):
+                client.pass_("bond")
+        finally:
+            client.close()
 
-    self.reporting_relay = ReportingRelay()
-    self.reporting_relay_task = self.loop.run_in_executor(
-        None, self.reporting_relay.start)
+    await asyncio.to_thread(run)
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 1)
+    assert (attempts[0]["username"], attempts[0]["password"]) == ("wakkwakk", "wakkwakk")
 
-  def tearDown(self):
-    self.reporting_relay.stop()
-    # We give reporting_relay a chance to be finished
-    self.loop.run_until_complete(self.reporting_relay_task)
 
-    self.server.close()
-    self.loop.run_until_complete(self.server.wait_closed())
+@pytest.mark.parametrize("noop", [False, True])
+async def test_pop3_enforces_max_attempts_even_after_noop(serve, sink, noop):
+    host, port = await serve(Pop3(make_options(max_attempts=2, banner="+OK")))
 
-    self.loop.run_until_complete(cancel_all_pending_tasks(self.loop))
+    def run():
+        client = poplib.POP3(host, port, timeout=5)
+        try:
+            if noop:
+                assert client.noop().startswith(b"+OK")
+            for _ in range(2):
+                client.user("u")
+                with pytest.raises(poplib.error_proto, match="Authentication failed"):
+                    client.pass_("p")
+            with pytest.raises((poplib.error_proto, OSError)):
+                client.noop()
+        finally:
+            client.close()
 
-    self.loop.close()
+    await asyncio.to_thread(run)
+    assert len(await asyncio.to_thread(sink.wait_for_auth, 2)) == 2
 
-  def test_login(self):
-    """Testing different login combinations"""
 
-    async def pop3_login():
-      login_sequences = [
-          # invalid login, invalid password
-          (('USER wakkwakk', b'+OK User accepted'),
-           ('PASS wakkwakk', b'-ERR Authentication failed.')),
-          # PASS without user
-          (
-              ('PASS bond', b'-ERR No username given.'),),
-          # Try to run a TRANSACITON state command in AUTHORIZATION state
-          (
-              ('RETR', b'-ERR Unknown command'),),
-      ]
-      for sequence in login_sequences:
-        reader, writer = await asyncio.open_connection(
-            '127.0.0.1', 8888, loop=self.loop)
-        # skip banner
-        await reader.readline()
-
-        for pair in sequence:
-          writer.write(bytes(pair[0] + "\r\n", 'utf-8'))
-          response = await reader.readline()
-          self.assertEqual(response.rstrip(), pair[1])
-
-    options = {
-        'port': 110,
-        'protocol_specific_data': {
-          'banner': '+OK POP3 server ready',
-          'max_attempts': 3
-        },
-        'users': {
-            'james': 'bond'
-        }
-    }
-    sut = Pop3(options, self.loop)
-
-    server_coro = asyncio.start_server(
-        sut.handle_session, '0.0.0.0', 8888, loop=self.loop)
-    self.server = self.loop.run_until_complete(server_coro)
-
-    self.loop.run_until_complete(pop3_login())
+def test_pop3_max_attempts_is_per_instance():
+    two = Pop3(make_options(max_attempts=2, banner="+OK"))
+    five = Pop3(make_options(max_attempts=5, banner="+OK"))
+    assert (two.max_tries, five.max_tries) == (2, 5)
