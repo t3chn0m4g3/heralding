@@ -53,3 +53,34 @@ async def test_non_ascii_wordlist_entry_is_tolerated(serve, sink, monkeypatch):
 def test_crack_semaphore_is_per_instance():
     a, b = Vnc(make_options()), Vnc(make_options())
     assert a._semaphore() is not b._semaphore()
+
+
+async def test_busy_cracker_is_skipped_and_the_hash_logged(serve, sink, monkeypatch):
+    monkeypatch.setattr(heralding.honeypot.Honeypot, "wordlist", ["secret"])
+    cap = Vnc(make_options())
+    for _ in range(2):  # both crack slots taken
+        await cap._semaphore().acquire()
+    host, port = await serve(cap)
+    await asyncio.to_thread(_login, host, port, "secret")
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["password"] is None and attempt["password_hash"].startswith("$vnc$*")
+
+
+async def test_session_timeout_during_crack_still_logs_the_hash(serve, sink, monkeypatch):
+    import threading
+
+    release = threading.Event()
+    monkeypatch.setattr(heralding.honeypot.Honeypot, "wordlist", ["secret"])
+    monkeypatch.setattr(
+        "heralding.capabilities.vnc.crack_hash", lambda *args: release.wait(10) and None
+    )
+    cap = Vnc(make_options())
+    cap.timeout = 1
+    host, port = await serve(cap)
+    try:
+        await asyncio.to_thread(_login, host, port, "secret")
+        attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+        assert attempt["password_hash"].startswith("$vnc$*")
+        assert cap._semaphore().locked() is False and cap._semaphore()._value == 1
+    finally:
+        release.set()

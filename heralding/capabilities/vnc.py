@@ -75,15 +75,25 @@ class Vnc(HandlerBase):
 
         wordlist = heralding.honeypot.Honeypot.wordlist
         cracked = None
-        if wordlist:
-            async with self._semaphore():
-                cracked = await asyncio.to_thread(crack_hash, challenge, client_response, wordlist)
+        if wordlist and not self._semaphore().locked():
+            # Busy crackers are skipped, not queued: the hash is what matters. The job holds
+            # its slot until the thread ends, and a session timeout still logs the hash.
+            job = asyncio.create_task(self._crack(challenge, client_response, wordlist))
+            try:
+                cracked = await asyncio.shield(job)
+            except asyncio.CancelledError:
+                session.add_auth_attempt("des_challenge", password_hash=password_hash)
+                raise
         if cracked is not None:
             session.add_auth_attempt("cracked", password=cracked, password_hash=password_hash)
         else:
             session.add_auth_attempt("des_challenge", password_hash=password_hash)
 
         session.end_session()
+
+    async def _crack(self, challenge, client_response, wordlist):
+        async with self._semaphore():
+            return await asyncio.to_thread(crack_hash, challenge, client_response, wordlist)
 
     def _semaphore(self) -> asyncio.Semaphore:
         if self._crack_sem is None:
