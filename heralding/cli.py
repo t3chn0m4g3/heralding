@@ -15,6 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import asyncio
+import errno
 import logging
 import logging.handlers
 import os
@@ -97,11 +98,17 @@ def load_config(config_file):
         return yaml.safe_load(_file.read())
 
 
+# errors of a peer that is already gone; resource errors (EMFILE, ENOBUFS, ...) stay visible
+_PEER_ERRNOS = {errno.EINVAL, errno.ENOTCONN, errno.EBADF, errno.ECONNRESET, errno.EPIPE}
+
+
 def loop_exception_handler(loop, context):
     """A peer that vanished while a library callback ran (e.g. asyncssh setting socket options
     on a reset connection) is a client error: debug log only, no traceback."""
     exc = context.get("exception")
-    if isinstance(exc, OSError | EOFError):
+    if isinstance(exc, ConnectionError | EOFError) or (
+        isinstance(exc, OSError) and exc.errno in _PEER_ERRNOS
+    ):
         logger.debug(
             "Client error in event loop callback [%s] %s", type(exc).__name__, exc, exc_info=exc
         )

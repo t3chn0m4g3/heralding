@@ -147,6 +147,7 @@ def test_port_conflict_fails_without_traceback(tmp_path):
 
 def test_loop_exception_handler_keeps_client_errors_out_of_the_log(caplog):
     import asyncio
+    import errno
     import logging
 
     from heralding.cli import loop_exception_handler
@@ -156,7 +157,13 @@ def test_loop_exception_handler_keeps_client_errors_out_of_the_log(caplog):
         with caplog.at_level(logging.INFO):
             loop_exception_handler(loop, {"message": "cb", "exception": OSError(22, "x")})
             assert not caplog.records
+            loop_exception_handler(loop, {"message": "cb", "exception": ConnectionResetError()})
+            assert not caplog.records
             loop_exception_handler(loop, {"message": "cb", "exception": RuntimeError("bug")})
+            assert any(r.levelno == logging.ERROR for r in caplog.records)
+            caplog.clear()
+            out_of_fds = OSError(errno.EMFILE, "Too many open files")
+            loop_exception_handler(loop, {"message": "accept", "exception": out_of_fds})
             assert any(r.levelno == logging.ERROR for r in caplog.records)
     finally:
         loop.close()
