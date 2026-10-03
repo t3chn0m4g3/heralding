@@ -59,3 +59,40 @@ def test_pop3_max_attempts_is_per_instance():
     two = Pop3(make_options(max_attempts=2, banner="+OK"))
     five = Pop3(make_options(max_attempts=5, banner="+OK"))
     assert (two.max_tries, five.max_tries) == (2, 5)
+
+
+async def test_dovecot_dialect_capa_and_auth_plain(serve, sink):
+    import base64
+
+    host, port = await serve(
+        Pop3(make_options(max_attempts=3, banner="+OK Dovecot (Debian) ready."))
+    )
+
+    def run():
+        client = poplib.POP3(host, port, timeout=5)
+        try:
+            capabilities = client.capa()
+            assert "SASL" in capabilities and capabilities["SASL"] == ["PLAIN"]
+            assert client.user("bob") == b"+OK"
+            with pytest.raises(poplib.error_proto, match=r"\[AUTH\] Authentication failed\."):
+                client.pass_("one")
+            blob = base64.b64encode(b"\0alice\0two").decode()
+            with pytest.raises(poplib.error_proto, match=r"\[AUTH\] Authentication failed\."):
+                client._shortcmd("AUTH PLAIN " + blob)
+            with pytest.raises(poplib.error_proto, match="Unknown command: RETR"):
+                client.retr(1)
+            client.sock.settimeout(5)
+            assert client.quit() == b"+OK Logging out."
+        finally:
+            client.close()
+
+    await asyncio.to_thread(run)
+    attempts = await asyncio.to_thread(sink.wait_for_auth, 2)
+    assert [(a["username"], a["password"]) for a in attempts] == [("bob", "one"), ("alice", "two")]
+
+
+async def test_lines_end_with_crlf(serve, sink):
+    host, port = await serve(Pop3(make_options(max_attempts=3, banner="+OK Dovecot ready.")))
+    reader, writer = await asyncio.open_connection(host, port)
+    assert await reader.readline() == b"+OK Dovecot ready.\r\n"
+    writer.close()

@@ -13,12 +13,56 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import base64
+import binascii
 import logging
 
 from heralding.capabilities.handlerbase import HandlerBase
 from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
+
+# Replies of the server the banner names; "generic" for anything else.
+DIALECTS = {
+    "dovecot": {
+        "user": "+OK",
+        "fail": "-ERR [AUTH] Authentication failed.",
+        "unknown": "-ERR Unknown command: {cmd}",
+        "quit": "+OK Logging out.",
+        "capa": [
+            "CAPA",
+            "TOP",
+            "UIDL",
+            "RESP-CODES",
+            "PIPELINING",
+            "AUTH-RESP-CODE",
+            "USER",
+            "SASL PLAIN",
+        ],
+    },
+    "exchange": {
+        "user": "+OK",
+        "fail": "-ERR Logon failure: unknown user name or bad password.",
+        "unknown": "-ERR Command is not valid in this state.",
+        "quit": "+OK Microsoft Exchange Server POP3 server signing off.",
+        "capa": ["TOP", "UIDL", "SASL PLAIN", "USER"],
+    },
+    "generic": {
+        "user": "+OK User accepted",
+        "fail": "-ERR Authentication failed.",
+        "unknown": "-ERR Unknown command",
+        "quit": "+OK Logging out",
+        "capa": ["TOP", "UIDL", "USER", "SASL PLAIN"],
+    },
+}
+
+
+def dialect_for(banner: str) -> dict:
+    if "Dovecot" in banner:
+        return DIALECTS["dovecot"]
+    if "Microsoft Exchange" in banner:
+        return DIALECTS["exchange"]
+    return DIALECTS["generic"]
 
 
 class Pop3(HandlerBase):
@@ -28,6 +72,7 @@ class Pop3(HandlerBase):
         super().__init__(options)
         self.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
         self.banner = self.persona_value("banner", "+OK POP3 server ready")
+        self.replies = dialect_for(self.banner)
 
     async def execute_capability(self, reader, writer, session):
         await self._handle_session(session, reader, writer)
@@ -57,8 +102,10 @@ class Pop3(HandlerBase):
 
             cmd = cmd.lower()
 
-            if cmd not in ["user", "pass", "quit", "noop"]:
-                await self.send_message(writer, "-ERR Unknown command")
+            if cmd not in ["user", "pass", "quit", "noop", "capa", "auth"]:
+                shown = "".join(ch for ch in cmd.upper()[:32] if ch.isprintable())
+                unknown = self.replies["unknown"].replace("{cmd}", shown)
+                await self.send_message(writer, unknown)
             else:
                 func_to_call = getattr(self, f"cmd_{cmd}", None)
                 return_value = await func_to_call(session, reader, writer, msg)
@@ -81,7 +128,35 @@ class Pop3(HandlerBase):
     # or: "-ERR No username given."
     async def cmd_user(self, session, reader, writer, msg):
         session.vdata["USER"] = msg
-        await self.send_message(writer, "+OK User accepted")
+        await self.send_message(writer, self.replies["user"])
+        return "AUTHORIZATION"
+
+    async def cmd_capa(self, session, reader, writer, msg):
+        await self.send_message(writer, "\r\n".join(["+OK", *self.replies["capa"], "."]))
+        return "AUTHORIZATION"
+
+    async def cmd_auth(self, session, reader, writer, msg):
+        """AUTH PLAIN (RFC 5034), with or without an initial response."""
+        mechanism, _, initial = msg.partition(" ")
+        if mechanism.upper() != "PLAIN":
+            await self.send_message(writer, "-ERR Unsupported authentication mechanism.")
+            return "AUTHORIZATION"
+        if not initial:
+            await self.send_message(writer, "+ ")
+            initial = decode_lossless(await reader.readline()).strip()
+        try:
+            parts = base64.b64decode(initial.strip(), validate=True).split(b"\x00")
+        except binascii.Error, ValueError:
+            parts = []
+        if len(parts) != 3:
+            await self.send_message(writer, "-ERR Invalid base64 data in continued response")
+            return "AUTHORIZATION"
+        session.add_auth_attempt(
+            "plaintext", username=decode_lossless(parts[1]), password=decode_lossless(parts[2])
+        )
+        await self.send_message(writer, self.replies["fail"])
+        if session.get_number_of_login_attempts() >= self.max_tries:
+            return ""
         return "AUTHORIZATION"
 
     async def cmd_pass(self, session, reader, writer, msg):
@@ -89,7 +164,7 @@ class Pop3(HandlerBase):
             await self.send_message(writer, "-ERR No username given.")
         else:
             session.add_auth_attempt("plaintext", username=session.vdata["USER"], password=msg)
-            await self.send_message(writer, "-ERR Authentication failed.")
+            await self.send_message(writer, self.replies["fail"])
 
         if "USER" in session.vdata:
             del session.vdata["USER"]
@@ -102,11 +177,11 @@ class Pop3(HandlerBase):
         return "AUTHORIZATION"
 
     async def cmd_quit(self, session, reader, writer, msg):
-        await self.send_message(writer, "+OK Logging out")
+        await self.send_message(writer, self.replies["quit"])
         return ""
 
     @staticmethod
     async def send_message(writer, msg):
-        message_bytes = bytes(msg + "\n", "utf-8")
+        message_bytes = bytes(msg + "\r\n", "utf-8")
         writer.write(message_bytes)
         await writer.drain()

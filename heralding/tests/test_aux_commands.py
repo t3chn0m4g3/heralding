@@ -16,8 +16,7 @@ async def test_pop3_commands_are_recorded(serve, sink):
     def run():
         client = poplib.POP3(host, port, timeout=5)
         try:
-            with pytest.raises(poplib.error_proto):
-                client.capa()
+            assert "USER" in client.capa()
             client.user("a")
             with pytest.raises(poplib.error_proto):
                 client.pass_("b")
