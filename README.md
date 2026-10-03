@@ -119,7 +119,7 @@ timestamp,duration,session_id,source_ip,source_port,destination_ip,destination_p
 One line per authentication attempt, written as soon as the credentials arrive. The first ten
 columns are stable for external consumers. New columns are only ever
 appended. `password_hash` is set for protocols that never send the password in clear (for example
-MySQL, VNC, SMTP CRAM-MD5, SIP and SMB) and uses formats that hashcat or John the Ripper understand.
+MySQL, VNC, SMTP CRAM-MD5, SIP, SMB, RDP NLA and LDAP NTLM) and uses formats that hashcat or John the Ripper understand.
 
 ```text
 timestamp,auth_id,session_id,source_ip,source_port,destination_ip,destination_port,protocol,username,password,password_hash
@@ -129,6 +129,13 @@ timestamp,auth_id,session_id,source_ip,source_port,destination_ip,destination_po
 **Warning:** values are written exactly as the client sent them. A "password" like
 `=HYPERLINK("http://evil")` ends up verbatim in the CSV. Do not open these files in a spreadsheet
 application with formula evaluation enabled.
+
+### LDAP NTLM
+
+With a Windows persona the LDAP capability behaves like Active Directory: NTLM binds over Sicily
+(ldap3, impacket) and SASL GSS-SPNEGO are answered with a challenge, and the NTLMv1/v2 response is
+logged in `password_hash`. Failed binds carry AD's `AcceptSecurityContext error, data 52e` message.
+OpenLDAP and 389 personas refuse Sicily as those servers do.
 
 ### MSSQL encryption
 

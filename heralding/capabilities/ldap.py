@@ -16,9 +16,11 @@
 """LDAP capability: binds fail with invalidCredentials, the RootDSE shows persona values."""
 
 import logging
+import secrets
+import struct
 
 from heralding.capabilities.handlerbase import HandlerBase
-from heralding.libs import ber
+from heralding.libs import ber, ntlm
 from heralding.misc.textutil import decode_lossless
 
 logger = logging.getLogger(__name__)
@@ -34,7 +36,13 @@ OP_NAMES = {
     0x66: "MODIFY", 0x68: "ADD", 0x4A: "DELETE", 0x6C: "MODDN", 0x6E: "COMPARE",
 }  # fmt: skip
 
-SUCCESS, AUTH_METHOD_NOT_SUPPORTED, INVALID_CREDENTIALS = 0, 7, 49
+SUCCESS, AUTH_METHOD_NOT_SUPPORTED, SASL_BIND_IN_PROGRESS, INVALID_CREDENTIALS = 0, 7, 14, 49
+# Active Directory's Sicily NTLM bind: package discovery, negotiate, response
+SICILY_DISCOVERY, SICILY_NEGOTIATE, SICILY_RESPONSE = 0x89, 0x8A, 0x8B
+SERVER_SASL_CREDS = 0x87
+AD_INVALID_CREDENTIALS = (
+    "80090308: LdapErr: DSID-0C090569, comment: AcceptSecurityContext error, data 52e, v4563\x00"
+)
 INSUFFICIENT_ACCESS, UNWILLING_TO_PERFORM = 50, 53
 MAX_SASL_RECORDS = 20
 
@@ -52,7 +60,7 @@ class Ldap(HandlerBase):
         self.max_attempts = int(psd.get("max_attempts", 10))
 
     async def execute_capability(self, reader, writer, session):
-        sasl = []
+        state = {"sasl": [], "challenge": None}
         while session.connected:
             raw = await self._read_message(reader)
             if raw is None:
@@ -66,8 +74,8 @@ class Ldap(HandlerBase):
             if op.tag == UNBIND_REQUEST:
                 break
             if op.tag == BIND_REQUEST:
-                code = self._bind(session, op, sasl)
-                await self._reply(writer, message_id, BIND_RESPONSE, ldap_result(code))
+                body = self._bind(session, op, state)
+                await self._reply(writer, message_id, BIND_RESPONSE, body)
                 if session.get_number_of_login_attempts() >= self.max_attempts:
                     break
             elif op.tag == SEARCH_REQUEST:
@@ -81,11 +89,21 @@ class Ldap(HandlerBase):
                     writer, message_id, RESULT_RESPONSES[op.tag], ldap_result(INSUFFICIENT_ACCESS)
                 )
             # abandon and unknown operations get no answer
-        if sasl:
-            session.set_auxiliary_data({"sasl_mechanisms": sasl})
+        if state["sasl"]:
+            session.set_auxiliary_data({"sasl_mechanisms": state["sasl"]})
         session.end_session()
 
-    def _bind(self, session, op, sasl):
+    @staticmethod
+    def _active_directory():
+        persona = HandlerBase.persona
+        return persona is not None and persona.os_family == "windows"
+
+    def _result(self, code, **kwargs):
+        if code == INVALID_CREDENTIALS and self._active_directory():
+            kwargs.setdefault("diagnostic", AD_INVALID_CREDENTIALS)
+        return ldap_result(code, **kwargs)
+
+    def _bind(self, session, op, state):
         fields = op.children()
         if len(fields) < 3:
             raise ValueError("short BindRequest")
@@ -94,14 +112,24 @@ class Ldap(HandlerBase):
         if auth.tag == 0x80:  # simple
             password = decode_lossless(auth.value)
             if not name and not password:
-                return SUCCESS  # anonymous bind, needed for the RootDSE search
+                return self._result(SUCCESS)  # anonymous bind, needed for the RootDSE search
             session.add_auth_attempt("plaintext", username=name, password=password)
-            return INVALID_CREDENTIALS
+            return self._result(INVALID_CREDENTIALS)
+        if auth.tag in (SICILY_DISCOVERY, SICILY_NEGOTIATE, SICILY_RESPONSE):
+            if not self._active_directory():
+                return self._result(AUTH_METHOD_NOT_SUPPORTED)
+            if auth.tag == SICILY_DISCOVERY:
+                return self._result(SUCCESS, matched_dn="NTLM")
+            # the NTLM token travels in the bind and, for the challenge, in matchedDN
+            reply = self._ntlm_step(session, auth.value, state)
+            if reply is None:
+                return self._result(INVALID_CREDENTIALS)
+            return self._result(SUCCESS, matched_dn=reply)
         if auth.tag == 0xA3:  # sasl
             sasl_fields = auth.children()
             mechanism = decode_lossless(sasl_fields[0].value) if sasl_fields else ""
-            if len(sasl) < MAX_SASL_RECORDS:
-                sasl.append(mechanism)
+            if len(state["sasl"]) < MAX_SASL_RECORDS:
+                state["sasl"].append(mechanism)
             if mechanism.upper() == "PLAIN" and len(sasl_fields) > 1:
                 parts = sasl_fields[1].value.split(b"\x00")
                 if len(parts) == 3:
@@ -110,12 +138,54 @@ class Ldap(HandlerBase):
                         username=decode_lossless(parts[1] or parts[0]),
                         password=decode_lossless(parts[2]),
                     )
-                    return INVALID_CREDENTIALS
+                    return self._result(INVALID_CREDENTIALS)
+            if (
+                mechanism.upper() == "GSS-SPNEGO"
+                and len(sasl_fields) > 1
+                and self._active_directory()
+                and ntlm.SIGNATURE in sasl_fields[1].value
+            ):
+                reply = self._ntlm_step(session, sasl_fields[1].value, state)
+                if reply is not None:
+                    return self._result(SASL_BIND_IN_PROGRESS) + ber.octet_string(
+                        reply, tag=SERVER_SASL_CREDS
+                    )
+                return self._result(INVALID_CREDENTIALS)
             # an advertised mechanism must not be "unsupported"; the bind just fails
             if mechanism.upper() in self._rootdse()["supportedSASLMechanisms"]:
-                return INVALID_CREDENTIALS
-            return AUTH_METHOD_NOT_SUPPORTED
-        return AUTH_METHOD_NOT_SUPPORTED
+                return self._result(INVALID_CREDENTIALS)
+            return self._result(AUTH_METHOD_NOT_SUPPORTED)
+        return self._result(AUTH_METHOD_NOT_SUPPORTED)
+
+    def _ntlm_step(self, session, token, state):
+        """NTLM negotiate -> challenge token (returned); authenticate -> logged, None."""
+        message = ntlm.extract_message(token)
+        kind = struct.unpack_from("<I", message, 8)[0]
+        if kind == 1:
+            persona = HandlerBase.persona
+            state["challenge"] = secrets.token_bytes(8)
+            challenge = ntlm.challenge_message(
+                state["challenge"],
+                persona.netbios or persona.hostname,
+                persona.domain,
+                persona.fqdn,
+                version=ntlm.parse_version(persona.os_version),
+            )
+            # SPNEGO-wrapped requests get a wrapped answer, raw NTLM a raw one
+            return challenge if token.startswith(ntlm.SIGNATURE) else ntlm.response_token(challenge)
+        if kind == 3 and state["challenge"] is not None:
+            username, domain, workstation, method, password_hash = ntlm.authenticate(
+                message, state["challenge"]
+            )
+            state["challenge"] = None
+            session.set_auxiliary_data({"domain": domain, "workstation": workstation})
+            session.add_auth_attempt(
+                method,
+                username=f"{domain}\\{username}" if domain else username,
+                password_hash=password_hash,
+            )
+            return None
+        raise ValueError("unexpected NTLM message")
 
     async def _search(self, writer, message_id, op):
         fields = op.children()

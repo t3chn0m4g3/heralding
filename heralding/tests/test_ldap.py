@@ -174,3 +174,70 @@ async def test_openldap_rootdse_has_no_vendor_attributes(serve, sink):
     attrs = await asyncio.to_thread(run)
     assert "OpenLDAProotDSE" in attrs["objectClass"]
     assert not attrs.get("vendorName") and not attrs.get("defaultNamingContext")
+
+
+async def test_sicily_ntlm_bind_is_captured_on_active_directory(serve, sink, windows_persona):
+    host, port = await serve(ldap.Ldap(make_options()))
+
+    def run():
+        conn = ldap3.Connection(
+            _server(host, port),
+            user="CORP\\alice",
+            password="secret",
+            authentication=ldap3.NTLM,  # ldap3 binds with Sicily NTLM, like impacket
+            receive_timeout=5,
+        )
+        conn.open()
+        assert not conn.bind()
+        return conn.result
+
+    result = await asyncio.to_thread(run)
+    assert result["result"] == 49
+    assert result["message"].startswith("80090308: LdapErr:")
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["username"] == "CORP\\alice"
+    assert attempt["password"] is None
+    assert attempt["password_hash"].startswith("alice::CORP:")
+
+
+async def test_sicily_ntlm_is_unknown_to_openldap(serve, sink):
+    host, port = await serve(ldap.Ldap(make_options()))
+
+    def run():
+        conn = ldap3.Connection(
+            _server(host, port),
+            user="CORP\\alice",
+            password="secret",
+            authentication=ldap3.NTLM,
+            receive_timeout=5,
+        )
+        conn.open()
+        conn.bind()
+        return conn.result["result"]
+
+    assert await asyncio.to_thread(run) == 7  # authMethodNotSupported
+    assert sink.auth == []
+
+
+async def test_gss_spnego_ntlm_bind_is_captured_on_active_directory(serve, sink, windows_persona):
+    import spnego
+    from ldap3.protocol.sasl.sasl import send_sasl_negotiation
+
+    host, port = await serve(ldap.Ldap(make_options()))
+
+    def run():
+        # pyspnego produces the SPNEGO/NTLM tokens, ldap3 frames them as SASL binds
+        client = spnego.client("CORP\\bob", "hunter2", protocol="negotiate",
+                               options=spnego.NegotiateOptions.use_negotiate)  # fmt: skip
+        conn = ldap3.Connection(_server(host, port), receive_timeout=5)
+        conn.open()
+        conn.sasl_mechanism = "GSS-SPNEGO"
+        response = send_sasl_negotiation(conn, None, client.step())
+        assert response["result"] == 14  # saslBindInProgress
+        response = send_sasl_negotiation(conn, None, client.step(response["saslCreds"]))
+        return response["result"]
+
+    assert await asyncio.to_thread(run) == 49
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert attempt["username"] == "CORP\\bob"
+    assert attempt["password_hash"].startswith("bob::CORP:")
