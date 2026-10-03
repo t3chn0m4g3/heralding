@@ -144,7 +144,10 @@ class Smb(HandlerBase):
                     host = persona.netbios or persona.hostname if persona else "FILESERVER"
                     domain = persona.domain if persona else "WORKGROUP"
                     fqdn = persona.fqdn if persona else "fileserver.local"
-                    challenge_token = ntlm.challenge_message(challenge, host, domain, fqdn)
+                    version = ntlm.parse_version(persona.os_version if persona else "")
+                    challenge_token = ntlm.challenge_message(
+                        challenge, host, domain, fqdn, version=version
+                    )
                     # NTLM may be used directly or wrapped in SPNEGO.
                     if not token.startswith(ntlm.SIGNATURE):
                         challenge_token = ntlm.response_token(challenge_token)

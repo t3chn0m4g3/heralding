@@ -5,6 +5,7 @@ No credentials are authenticated or forwarded.
 """
 
 import struct
+import time
 
 from heralding.libs import ber
 
@@ -36,22 +37,43 @@ def extract_message(token):
     return token[offset:]
 
 
-def challenge_message(challenge, hostname, domain, fqdn, *, signing=False):
-    target = domain.encode("utf-16-le")
+def netbios_domain(domain):
+    """NetBIOS form of a DNS domain: first label, upper case, at most 15 characters."""
+    return (domain.split(".")[0] or "WORKGROUP").upper()[:15]
+
+
+def parse_version(text):
+    """'10.0.20348' -> (10, 0, 20348); Samba-style 6.1.0 for anything unparsable."""
+    try:
+        major, minor, build = (int(part) for part in str(text).split("."))
+        return major, minor, build
+    except ValueError:
+        return 6, 1, 0
+
+
+def challenge_message(challenge, hostname, domain, fqdn, *, signing=False, version=(6, 1, 0)):
+    nb_domain = netbios_domain(domain)
+    target = nb_domain.encode("utf-16-le")
     av = b""
-    for kind, value in ((1, hostname.upper()), (2, domain.upper()), (3, fqdn), (4, domain)):
+    pairs = ((1, hostname.upper()), (2, nb_domain), (3, fqdn), (4, domain), (5, domain))
+    for kind, value in pairs:
         encoded = value.encode("utf-16-le")
         av += struct.pack("<HH", kind, len(encoded)) + encoded
+    filetime = int((time.time() + 11644473600) * 10_000_000)
+    av += struct.pack("<HHQ", 7, 8, filetime)
     av += struct.pack("<HH", 0, 0)
-    flags = 0xA0888205  # Unicode, NTLM, extended security, target info, 128/56-bit support
+    # Unicode, NTLM, extended security, domain target, target info, version, 128/56-bit
+    flags = 0xA2898205
     if signing:
         flags |= 0x40000030  # key exchange, signing and sealing for CredSSP
+    major, minor, build = version
     return (
         SIGNATURE
-        + struct.pack("<IHHII", 2, len(target), len(target), 48, flags)
+        + struct.pack("<IHHII", 2, len(target), len(target), 56, flags)
         + challenge
         + b"\0" * 8
-        + struct.pack("<HHI", len(av), len(av), 48 + len(target))
+        + struct.pack("<HHI", len(av), len(av), 56 + len(target))
+        + struct.pack("<BBH3xB", major, minor, build, 15)
         + target
         + av
     )

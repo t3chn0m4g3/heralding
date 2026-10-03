@@ -47,6 +47,7 @@ class Persona:
     os_family: str
     values: dict
     cert_subject: dict
+    os_version: str = ""  # Windows build for NTLM, e.g. "10.0.20348"; empty means Samba
 
     @property
     def fqdn(self) -> str:
@@ -134,4 +135,5 @@ def select_persona(
         os_family=raw.get("os_family", "linux"),
         values=raw.get("capabilities") or {},
         cert_subject=cert,
+        os_version=str(raw.get("os_version") or ""),
     )

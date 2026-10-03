@@ -72,7 +72,8 @@ async def capture(tls, session, persona=None):
     host = persona.netbios or persona.hostname if persona else "SERVER"
     domain = persona.domain if persona else "WORKGROUP"
     fqdn = persona.fqdn if persona else "server.local"
-    reply = ntlm.challenge_message(challenge, host, domain, fqdn, signing=True)
+    os_version = ntlm.parse_version(persona.os_version if persona else "")
+    reply = ntlm.challenge_message(challenge, host, domain, fqdn, signing=True, version=os_version)
     if not token.startswith(ntlm.SIGNATURE):
         reply = ntlm.response_token(reply)
     await tls.write_tls(response(version, reply))

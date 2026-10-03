@@ -90,6 +90,7 @@ rhel-9:
 
 windows-server-2019:
   os_family: windows
+  os_version: "10.0.17763"
   domain: corp.local
   hostname_pattern: "{role}{n2}"
   roles: [DC, FS, EX, SQL, APP, RDS]
@@ -119,6 +120,7 @@ windows-server-2019:
 
 windows-server-2022:
   os_family: windows
+  os_version: "10.0.20348"
   domain: ad.local
   hostname_pattern: "{role}-{n2}"
   roles: [DC, FS, EX, SQL, APP, RDS, TS]
