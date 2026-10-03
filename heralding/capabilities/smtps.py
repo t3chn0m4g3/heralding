@@ -25,3 +25,4 @@ class smtps(smtp):
 
     NAME = "smtps"
     TLS = "implicit"
+    OFFER_AUTH_TLS = False  # already encrypted

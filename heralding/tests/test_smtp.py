@@ -141,7 +141,7 @@ async def test_ehlo_advertises_size_limit(serve, sink):
         return features
 
     features = await asyncio.to_thread(run)
-    assert features.get("size") == "1048576"
+    assert features.get("size") == "10240000"  # Postfix default
     assert "auth" in features
 
 
@@ -155,3 +155,53 @@ def test_explicit_fqdn_is_not_overwritten_by_lookup_or_persona(monkeypatch):
     assert smtp.SMTPHandler.fqdn == "persona.example"  # persona beats lookup
     smtp.set_fqdn("", source="persona")
     assert smtp.SMTPHandler.fqdn == ""
+
+
+async def test_postfix_persona_dialect(serve, sink, server_ssl_context):
+    import socket
+
+    cap = smtp.smtp(make_options(banner="mx-01.internal ESMTP Postfix (Ubuntu)"))
+    cap.starttls_context = server_ssl_context
+    host, port = await serve(cap)
+
+    def run():
+        with socket.create_connection((host, port), timeout=5) as raw:
+            greeting = raw.recv(1024)
+        client = smtplib.SMTP(host, port, local_hostname="client.example", timeout=5)
+        code, first = client.ehlo()
+        features = dict(client.esmtp_features)
+        helo = client.helo("client.example")
+        unknown = client.docmd("FOO")
+        mail = client.docmd("MAIL", "FROM:<a@example.org>")
+        client.close()
+        return greeting, first, features, helo, unknown, mail
+
+    greeting, first, features, helo, unknown, mail = await asyncio.to_thread(run)
+    assert greeting == b"220 mx-01.internal ESMTP Postfix (Ubuntu)\r\n"
+    assert first.decode().splitlines()[0] == "mx-01.internal"
+    assert "starttls" in features and "pipelining" in features
+    assert features["auth"].strip() == "PLAIN LOGIN CRAM-MD5"
+    assert helo == (250, b"mx-01.internal")
+    assert unknown == (502, b"5.5.2 Error: command not recognized")
+    assert mail == (250, b"2.0.0 Ok")
+
+
+async def test_exchange_persona_dialect(serve, sink):
+    cap = smtp.smtp(make_options(banner="EX01.corp.local Microsoft ESMTP MAIL Service ready"))
+    host, port = await serve(cap)
+
+    def run():
+        client = smtplib.SMTP(local_hostname="client.example", timeout=5)
+        greeting = client.connect(host, port)
+        first = client.ehlo()[1].decode().splitlines()[0]
+        unknown = client.docmd("FOO")
+        client.docmd("AUTH", "LOGIN " + base64.b64encode(b"u").decode())
+        failed = client.docmd(base64.b64encode(b"p").decode())
+        client.close()
+        return greeting, first, unknown, failed
+
+    greeting, first, unknown, failed = await asyncio.to_thread(run)
+    assert greeting[1].decode().startswith("EX01.corp.local Microsoft ESMTP MAIL Service ready at ")
+    assert first == "EX01.corp.local Hello [127.0.0.1]"
+    assert unknown == (500, b"5.3.3 Unrecognized command 'FOO'")
+    assert failed == (535, b"5.7.3 Authentication unsuccessful")

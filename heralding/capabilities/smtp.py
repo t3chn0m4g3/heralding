@@ -23,6 +23,7 @@
 
 import base64
 import binascii
+import email.utils
 import logging
 import secrets
 import time
@@ -36,8 +37,71 @@ from heralding.misc.tls import upgrade_stream
 log = logging.getLogger(__name__)
 
 DATA_SIZE_LIMIT = 1024 * 1024
-AUTH_FAILED = "535 5.7.8 Authentication credentials invalid"
-BAD_ENCODING = "501 5.5.2 Cannot decode response"
+
+# Replies in the wording of the persona's mail server. aiosmtpd's own texts (the keys of
+# "replace") would identify it, so push() translates them.
+DIALECTS = {
+    "postfix": {
+        "ehlo_first": "250-{fqdn}",
+        "features": [
+            "PIPELINING",
+            "SIZE 10240000",
+            "ETRN",
+            "ENHANCEDSTATUSCODES",
+            "8BITMIME",
+            "DSN",
+        ],
+        "auth": "AUTH PLAIN LOGIN CRAM-MD5",
+        "auth_failed": "535 5.7.8 Error: authentication failed: authentication failure",
+        "bad_encoding": "501 5.5.2 Cannot decode response",
+        "bad_mechanism": "535 5.7.8 Error: authentication failed: Invalid authentication mechanism",
+        "tls_ready": "220 2.0.0 Ready to start TLS",
+        "unknown": "502 5.5.2 Error: command not recognized",
+        "replace": {
+            "250 OK": "250 2.0.0 Ok",
+            "221 Bye": "221 2.0.0 Bye",
+            "500 Error: bad syntax": "500 5.5.2 Error: bad syntax",
+            "503 Error: send HELO first": "503 5.5.1 Error: send HELO/EHLO first",
+            "503 Error: send EHLO first": "503 5.5.1 Error: send HELO/EHLO first",
+            "503 Error: need MAIL command": "503 5.5.1 Error: need MAIL command",
+            "503 Error: need RCPT command": "503 5.5.1 Error: need RCPT command",
+            "503 Error: nested MAIL command": "503 5.5.1 Error: nested MAIL command",
+            "502 EXPN not implemented": "502 5.5.2 Error: command not recognized",
+            "500 Command line too long": "500 5.5.2 Error: line too long",
+        },
+        "help": "502 5.5.2 Error: command not recognized",
+        "vrfy": "502 5.5.1 VRFY command is disabled",
+    },
+    "exchange": {
+        "ehlo_first": "250-{fqdn} Hello [{peer}]",
+        "features": ["SIZE 37748736", "PIPELINING", "DSN", "ENHANCEDSTATUSCODES", "8BITMIME"],
+        "auth": "AUTH LOGIN",
+        "auth_failed": "535 5.7.3 Authentication unsuccessful",
+        "bad_encoding": "501 5.5.4 Invalid arguments",
+        "bad_mechanism": "504 5.7.4 Unrecognized authentication type",
+        "tls_ready": "220 2.0.0 SMTP server ready",
+        "unknown": "500 5.3.3 Unrecognized command '{cmd}'",
+        "replace": {
+            "250 OK": "250 2.0.0 OK",
+            "221 Bye": "221 2.0.0 Service closing transmission channel",
+            "500 Error: bad syntax": "501 5.5.4 Invalid arguments",
+            "503 Error: send HELO first": "503 5.5.2 Send hello first",
+            "503 Error: send EHLO first": "503 5.5.2 Send hello first",
+            "503 Error: need MAIL command": "503 5.5.2 Need mail command",
+            "503 Error: need RCPT command": "503 5.5.2 Need rcpt command",
+            "503 Error: nested MAIL command": "503 5.5.2 Sender already specified",
+            "502 EXPN not implemented": "502 5.3.3 Command not implemented",
+            "500 Command line too long": "500 5.3.3 Line too long",
+        },
+        "help": "214-This server supports the following commands:\r\n"
+        "214 HELO EHLO STARTTLS RCPT DATA RSET MAIL QUIT HELP AUTH BDAT",
+        "vrfy": "252 2.1.5 Cannot VRFY user",
+    },
+}
+
+
+def dialect_for(banner: str) -> dict:
+    return DIALECTS["exchange" if "Microsoft" in banner else "postfix"]
 
 
 def set_fqdn(value: str, source: str = "persona") -> None:
@@ -77,8 +141,11 @@ class SMTPHandler(SMTP):
         tls_context=None,
         fqdn=None,
     ):
+        self.dialect = dialect_for(banner)
+        if self.dialect is DIALECTS["exchange"] and banner.endswith("Service ready"):
+            banner += " at " + email.utils.formatdate(localtime=True)
         self.banner = banner
-        self.ehlo_hostname = ehlo_hostname or banner
+        self.ehlo_hostname = ehlo_hostname or banner.split(" ", 1)[0]
         self.fqdn_value = fqdn or SMTPHandler.fqdn
         self._starttls_context = tls_context
         self._tls_active = False
@@ -95,7 +162,19 @@ class SMTPHandler(SMTP):
         self.session.extended_smtp = None
         self.session.host_name = None
 
+    def _translate(self, status):
+        if status.startswith('500 Error: command "'):
+            return self.dialect["unknown"].replace("{cmd}", status.split('"')[1][:32])
+        if status.startswith(("250 Supported commands", "250 Syntax: ")):
+            return self.dialect["help"]
+        if status.startswith("502 Could not VRFY"):
+            return self.dialect["vrfy"]
+        if status.startswith("220 ") and status.endswith(" "):
+            return status.rstrip()  # aiosmtpd greeting with an empty ident
+        return self.dialect["replace"].get(status, status)
+
     async def push(self, status):
+        status = self._translate(status)
         response = bytes(status + "\r\n", "utf-8" if self.enable_SMTPUTF8 else "ascii")
         self._writer.write(response)
         log.debug(response)
@@ -106,18 +185,34 @@ class SMTPHandler(SMTP):
         if self._reader.at_eof():
             self.stop()
 
+    @syntax("HELO hostname")
+    async def smtp_HELO(self, hostname):
+        if not hostname:
+            await self.push("501 Syntax: HELO hostname")
+            return
+        self._set_rset_state()
+        self.session.extended_smtp = False
+        self.session.host_name = hostname
+        await self.push(f"250 {self.ehlo_hostname}")
+
     @syntax("EHLO hostname")
     async def smtp_EHLO(self, hostname):
         if not hostname:
             await self.push("501 Syntax: EHLO hostname")
             return
         self._set_rset_state()
-        await self.push(f"250-{self.ehlo_hostname} Hello {hostname}")
-        await self.push(f"250-SIZE {DATA_SIZE_LIMIT}")
-        await self.push("250-8BITMIME")
+        self.session.extended_smtp = True
+        self.session.host_name = hostname
+        peer = (self.session.peer or ("",))[0]
+        first = self.dialect["ehlo_first"].replace("{fqdn}", self.ehlo_hostname)
+        await self.push(first.replace("{peer}", str(peer)))
+        features = list(self.dialect["features"])
         if self._starttls_context is not None and not self._tls_active:
-            await self.push("250-STARTTLS")
-        await self.push("250 AUTH PLAIN LOGIN CRAM-MD5")
+            features.append("STARTTLS")
+        features.append(self.dialect["auth"])
+        for feature in features[:-1]:
+            await self.push("250-" + feature)
+        await self.push("250 " + features[-1])
 
     @syntax("STARTTLS")
     async def smtp_STARTTLS(self, arg):
@@ -127,7 +222,7 @@ class SMTPHandler(SMTP):
         if self._starttls_context is None or self._tls_active:
             await self.push("454 4.7.0 TLS not available due to temporary reason")
             return
-        await self.push("220 2.0.0 Ready to start TLS")
+        await self.push(self.dialect["tls_ready"])
         # upgrade the existing stream in place; a failed handshake is a client error
         await upgrade_stream(self._reader, self._writer, self._starttls_context)
         self._tls_active = True
@@ -159,13 +254,13 @@ class SMTPHandler(SMTP):
             elif mechanism == "CRAM-MD5":
                 await self._auth_cram_md5()
             else:
-                await self.push("504 5.5.4 Unrecognized authentication type")
+                await self.push(self.dialect["bad_mechanism"])
                 return
         except binascii.Error, ValueError:
-            await self.push(BAD_ENCODING)
+            await self.push(self.dialect["bad_encoding"])
             return
         if self.transport is not None:
-            await self.push(AUTH_FAILED)
+            await self.push(self.dialect["auth_failed"])
 
     async def _auth_plain(self, args):
         if len(args) == 1:
@@ -247,6 +342,8 @@ class SMTPHandler(SMTP):
 
 class smtp(HandlerBase):
     NAME = "smtp"
+    NEEDS_CERT = True  # for STARTTLS on port 25, as on a real MTA
+    OFFER_AUTH_TLS = True
 
     def __init__(self, options):
         super().__init__(options)
@@ -255,6 +352,8 @@ class smtp(HandlerBase):
 
     async def execute_capability(self, reader, writer, session):
         persona = HandlerBase.persona
+        if self.OFFER_AUTH_TLS:
+            session.set_auxiliary_data({"starttls": False})
         smtp_cap = SMTPHandler(
             reader,
             writer,
@@ -262,6 +361,7 @@ class smtp(HandlerBase):
             self._options,
             banner=self.persona_value("banner", "ESMTP"),
             ehlo_hostname=persona.fqdn if persona is not None else None,
+            tls_context=self.starttls_context if self.OFFER_AUTH_TLS else None,
             fqdn=self.explicit_fqdn,
         )
         await smtp_cap._handle_client()
