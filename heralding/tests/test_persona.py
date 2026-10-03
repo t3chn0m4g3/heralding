@@ -176,4 +176,4 @@ async def test_http_error_page_style_follows_explicit_banner_and_escapes_percent
     assert status == 400
     assert headers["Server"] == "Apache/2.4.62 (Debian) 100%"
     assert b"HTTP Error" not in body
-    assert b"<center>Apache/2.4.62 (Debian) 100%</center>" in body
+    assert b"<address>Apache/2.4.62 (Debian) 100% Server at 127.0.0.1 Port" in body

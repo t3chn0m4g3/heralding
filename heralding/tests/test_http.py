@@ -78,3 +78,38 @@ async def test_overlong_request_line_is_414(serve, sink):
     host, port = await serve(http_capability.Http(make_options(banner="")))
     status, _, _ = await asyncio.to_thread(_get, host, port, "/" + "a" * 9000)
     assert status == 414
+
+
+def _raw(host, port, method, path="/"):
+    """http.client with an unusual method token; returns status line parts, headers, body."""
+    client = httpclient.HTTPConnection(host, port, timeout=5)
+    client.putrequest(method, path, skip_accept_encoding=True)
+    client.endheaders()
+    response = client.getresponse()
+    data = response.read()
+    client.close()
+    return response.version, response.status, response.reason, data
+
+
+async def test_responses_use_http_1_1_and_the_family_401_page(serve, sink):
+    for banner, realm, marker in (
+        ("Apache/2.4.62 (Debian)", "Restricted Content", b"<address>Apache/2.4.62 (Debian) Server"),
+        ("nginx/1.24.0 (Ubuntu)", "Restricted", b"<title>401 Authorization Required</title>"),
+        ("Microsoft-IIS/10.0", "127.0.0.1", b"401 - Unauthorized: Access is denied"),
+    ):
+        host, port = await serve(http_capability.Http(make_options(banner=banner)))
+        version, status, reason, body = await asyncio.to_thread(_raw, host, port, "GET")
+        assert (version, status, reason) == (11, 401, "Unauthorized")
+        assert marker in body
+        _, headers, _ = await asyncio.to_thread(_get, host, port)
+        assert headers["WWW-Authenticate"] == f'Basic realm="{realm}"'
+        assert headers["Connection"] == "close"
+
+
+async def test_parser_errors_use_standard_reason_phrases(serve, sink):
+    host, port = await serve(http_capability.Http(make_options(banner="nginx/1.24.0 (Ubuntu)")))
+    for method, expected in (("GET X", (400, "Bad Request")), ("FOO", (501, "Not Implemented"))):
+        _, status, reason, body = await asyncio.to_thread(_raw, host, port, method)
+        assert (status, reason) == expected
+        assert b"syntax" not in body and b"Unsupported" not in body
+        assert b"<hr><center>nginx/1.24.0 (Ubuntu)</center>" in body
