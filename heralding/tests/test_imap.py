@@ -125,3 +125,53 @@ async def test_imap_login_with_literals(serve, sink):
     await asyncio.to_thread(run)
     attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
     assert (attempt["username"], attempt["password"]) == ("u", 'p"')
+
+
+UBUNTU_BANNER = (
+    "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN "
+    "AUTH=LOGIN] Dovecot (Ubuntu) ready."
+)
+
+
+async def test_capability_matches_greeting_and_login_mechanism_works(serve, sink):
+    host, port = await serve(Imap(make_options(max_attempts=3, banner=UBUNTU_BANNER)))
+
+    def run():
+        client = imaplib.IMAP4(host, port, timeout=5)
+        try:
+            greeting = set(client.capabilities)
+            typ, data = client.capability()
+            assert typ == "OK" and set(data[0].decode().upper().split()) == greeting
+            assert client.xatom("ID", "NIL")[0] == "OK"
+            assert client.response("ID") == ("ID", [b'("name" "Dovecot")'])
+            answers = iter([b"alice", b"wonderland"])
+            with pytest.raises(imaplib.IMAP4.error) as excinfo:
+                client.authenticate("LOGIN", lambda _challenge: next(answers))
+            assert excinfo.value.args[0] == "[AUTHENTICATIONFAILED] Authentication failed."
+        finally:
+            client.shutdown()
+
+    await asyncio.to_thread(run)
+    attempt = (await asyncio.to_thread(sink.wait_for_auth, 1))[0]
+    assert (attempt["username"], attempt["password"]) == ("alice", "wonderland")
+
+
+async def test_go_ahead_follows_each_literal_not_the_first():
+    imap = Imap(_options())
+    sent = []
+
+    class Writer:
+        def write(self, data):
+            sent.append(data)
+
+        async def drain(self):
+            pass
+
+    for args, go_aheads in (("{1+}", 1), ("{1}", 1)):
+        reader = asyncio.StreamReader()
+        # first literal as given, second one of the opposite kind
+        second = "{1}" if args.endswith("+}") else "{1+}"
+        reader.feed_data(f"u {second}\r\np\r\n".encode())
+        sent.clear()
+        assert await imap._parse_astrings(reader, Writer(), args, 2) == ["u", "p"]
+        assert sent.count(b"+ \r\n") == go_aheads

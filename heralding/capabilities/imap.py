@@ -23,6 +23,21 @@ from heralding.misc.textutil import decode_lossless
 logger = logging.getLogger(__name__)
 
 CRLF = "\r\n"
+DEFAULT_CAPABILITIES = "IMAP4rev1 ID LITERAL+ AUTH=PLAIN AUTH=LOGIN"
+EXCHANGE_CAPABILITIES = (
+    "IMAP4 IMAP4rev1 AUTH=PLAIN UIDPLUS MOVE ID UNSELECT CHILDREN IDLE NAMESPACE LITERAL+"
+)
+
+
+def capabilities_for(banner: str) -> str:
+    """The CAPABILITY list must match what the greeting advertises, as on a real server."""
+    start = banner.find("[CAPABILITY ")
+    end = banner.find("]", start)
+    if start != -1 and end != -1:
+        return banner[start + len("[CAPABILITY ") : end]
+    if "Microsoft Exchange" in banner:
+        return EXCHANGE_CAPABILITIES
+    return DEFAULT_CAPABILITIES
 
 
 class Imap(HandlerBase):
@@ -33,8 +48,10 @@ class Imap(HandlerBase):
         self.max_tries = int(self.options["protocol_specific_data"]["max_attempts"])
         self.banner = self.persona_value("banner", "* OK IMAP4rev1 Server Ready")
 
-        self.available_commands = ["authenticate", "capability", "login", "logout", "noop"]
-        self.available_mechanisms = ["plain"]
+        self.capabilities = capabilities_for(self.banner)
+        self.dovecot = "Dovecot" in self.banner
+        self.available_commands = ["authenticate", "capability", "id", "login", "logout", "noop"]
+        self.available_mechanisms = ["plain", "login"]
 
     async def execute_capability(self, reader, writer, session):
         await self._handle_session(session, reader, writer)
@@ -98,12 +115,27 @@ class Imap(HandlerBase):
         if len(parts) == 2:
             # SASL-IR (RFC 4959): initial response on the command line, "=" means empty
             raw_msg = b"" if parts[1] == "=" else parts[1].encode("ascii", "replace")
+        elif auth_mechanism == "login":
+            raw_msg = None
         else:
             # the space after '+' is needed according to RFC
             await self.send_message(writer, "+ ")
             raw_msg = (await reader.readline()).rstrip(b"\r\n")
 
-        if auth_mechanism == "plain":
+        if auth_mechanism == "login":
+            values = []
+            for prompt, initial in (("VXNlcm5hbWU6", raw_msg), ("UGFzc3dvcmQ6", None)):
+                if initial is None:
+                    await self.send_message(writer, "+ " + prompt)
+                    initial = (await reader.readline()).rstrip(b"\r\n")
+                success, value = self.try_b64decode(initial, session)
+                if not success:
+                    await self.send_message(writer, tag + " BAD invalid command")
+                    return "Not Authenticated"
+                values.append(decode_lossless(value))
+            session.add_auth_attempt("plaintext", username=values[0], password=values[1])
+            await self.send_message(writer, tag + self.auth_failed())
+        elif auth_mechanism == "plain":
             success, credentials = self.try_b64decode(raw_msg, session)
             # \x00 separates authorization identity, username and password; the
             # authorization identity is unused here, so exactly two \x00 are expected (RFC 4616)
@@ -112,15 +144,25 @@ class Imap(HandlerBase):
                 session.add_auth_attempt(
                     "plaintext", username=decode_lossless(user), password=decode_lossless(password)
                 )
-                await self.send_message(writer, tag + " NO Authentication failed")
+                await self.send_message(writer, tag + self.auth_failed())
             else:
                 await self.send_message(writer, tag + " BAD invalid command")
         self.stop_if_too_many_attempts(session)
         return "Not Authenticated"
 
+    def auth_failed(self):
+        if self.dovecot:
+            return " NO [AUTHENTICATIONFAILED] Authentication failed."
+        return " NO Authentication failed"
+
     async def cmd_capability(self, session, reader, writer, tag, args):
-        await self.send_message(writer, "* CAPABILITY IMAP4rev1 AUTH=PLAIN")
+        await self.send_message(writer, "* CAPABILITY " + self.capabilities)
         await self.send_message(writer, tag + " OK CAPABILITY completed")
+        return "Not Authenticated"
+
+    async def cmd_id(self, session, reader, writer, tag, args):
+        await self.send_message(writer, '* ID ("name" "Dovecot")' if self.dovecot else "* ID NIL")
+        await self.send_message(writer, tag + " OK ID completed")
         return "Not Authenticated"
 
     async def cmd_login(self, session, reader, writer, tag, args):
@@ -136,7 +178,7 @@ class Imap(HandlerBase):
         password = values[1] if len(values) > 1 else ""
 
         session.add_auth_attempt("plaintext", username=user, password=password)
-        await self.send_message(writer, tag + " NO Authentication failed")
+        await self.send_message(writer, tag + self.auth_failed())
         self.stop_if_too_many_attempts(session)
         return "Not Authenticated"
 
@@ -154,7 +196,7 @@ class Imap(HandlerBase):
                 size = int(rest[1:-1].rstrip("+"))
                 if not 0 <= size <= 4096:
                     raise ValueError("literal too large")
-                if not text.endswith("+}"):  # non-synchronising literals need no go-ahead
+                if not rest.endswith("+}"):  # non-synchronising literals need no go-ahead
                     await self.send_message(writer, "+ ")
                 data = await reader.readexactly(size)
                 value = decode_lossless(data)
