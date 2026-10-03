@@ -31,6 +31,71 @@ logger = logging.getLogger(__name__)
 
 TERMINATOR = "\r\n"
 
+# Reply texts of the server the banner names; "generic" for anything else.
+DIALECTS = {
+    "proftpd": {
+        "user": "331 Password required for {user}",
+        "fail": "530 Login incorrect.",
+        "unknown": "500 {cmd} not understood",
+        "login_first": "530 Please login with USER and PASS",
+        "user_first": "503 Login with USER first",
+        "auth_tls": "234 AUTH TLS successful",
+        "pbsz": "200 PBSZ 0 successful",
+        "prot": "200 Protection set to Private",
+        "opts": "200 UTF8 set to on",
+        "quit": "221 Goodbye.",
+    },
+    "vsftpd": {
+        "user": "331 Please specify the password.",
+        "fail": "530 Login incorrect.",
+        "unknown": "500 Unknown command.",
+        "login_first": "530 Please login with USER and PASS.",
+        "user_first": "503 Login with USER first.",
+        "auth_tls": "234 Proceed with negotiation.",
+        "pbsz": "200 PBSZ set to 0.",
+        "prot": "200 PROT now Private.",
+        "opts": "200 Always in UTF8 mode.",
+        "quit": "221 Goodbye.",
+    },
+    "microsoft": {
+        "user": "331 Password required",
+        "fail": "530 User cannot log in.",
+        "unknown": "500 Command not understood.",
+        "login_first": "530 Please login with USER and PASS.",
+        "user_first": "503 Login with USER first.",
+        "auth_tls": "234 AUTH command ok. Expecting TLS Negotiation.",
+        "pbsz": "200 PBSZ command successful.",
+        "prot": "200 PROT command successful.",
+        "opts": "200 OPTS UTF8 command successful - UTF8 encoding now ON.",
+        "quit": "221 Goodbye.",
+    },
+    "generic": {
+        "user": "331 Now specify the Password.",
+        "fail": "530 Authentication Failed.",
+        "unknown": "500 Unknown Command.",
+        "login_first": "503 Login with USER first.",
+        "user_first": "503 Login with USER first.",
+        "auth_tls": "234 AUTH TLS successful.",
+        "pbsz": "200 PBSZ=0",
+        "prot": "200 Protection level set.",
+        "opts": "200 OK.",
+        "quit": "221 Bye.",
+    },
+}
+
+
+def dialect_for(banner: str) -> dict:
+    lowered = banner.lower()
+    for name in ("proftpd", "vsftpd", "microsoft"):
+        if name in lowered:
+            return DIALECTS[name]
+    return DIALECTS["generic"]
+
+
+def mapped_ip(ip: str) -> str:
+    """Address as a dual-stack ProFTPD prints it: IPv4 in ::ffff: form."""
+    return ip if ":" in ip else "::ffff:" + ip
+
 
 class FtpHandler:
     """Handles a single FTP connection"""
@@ -45,7 +110,8 @@ class FtpHandler:
         syst_type="UNIX Type: L8",
         tls_context=None,
     ):
-        self.banner = banner
+        self.banner = banner.replace("{server_ip}", mapped_ip(str(session.destination_ip)))
+        self.replies = dialect_for(banner)
         self.max_loggins = int(options["protocol_specific_data"]["max_attempts"])
         self.syst_type = syst_type
         self.tls_context = tls_context  # None: AUTH TLS not offered (already on TLS, or disabled)
@@ -97,26 +163,27 @@ class FtpHandler:
                 ]
                 meth = getattr(self, "do_" + cmd, None)
                 if not meth:
-                    await self.respond("500 Unknown Command.")
+                    await self.respond(self.replies["unknown"].replace("{cmd}", cmd[:64]))
                 else:
                     if not self.authenticated:
                         if cmd not in unauth_cmds:
-                            await self.respond("503 Login with USER first.")
+                            await self.respond(self.replies["login_first"])
                             continue
                     await meth(args)
                     self.state = cmd
 
     async def do_USER(self, arg):
         self.user = arg
-        await self.respond("331 Now specify the Password.")
+        shown = "".join(ch for ch in (arg or "")[:64] if ch.isprintable())
+        await self.respond(self.replies["user"].replace("{user}", shown))
 
     async def do_PASS(self, arg):
         if self.state != "USER":
-            await self.respond("503 Login with USER first.")
+            await self.respond(self.replies["user_first"])
             return
         passwd = arg
         self.session.add_auth_attempt("plaintext", username=self.user, password=passwd)
-        await self.respond("530 Authentication Failed.")
+        await self.respond(self.replies["fail"])
         if self.session.get_number_of_login_attempts() >= self.max_loggins:
             self.serve_flag = False
             self.stop()
@@ -138,22 +205,22 @@ class FtpHandler:
         if (arg or "").upper() not in ("TLS", "TLS-C", "SSL"):
             await self.respond("504 Unknown security mechanism.")
             return
-        await self.respond("234 AUTH TLS successful.")
+        await self.respond(self.replies["auth_tls"])
         await upgrade_stream(self.reader, self.writer, self.tls_context)
         self.tls_active = True
         self.session.set_auxiliary_data({"starttls": True})
 
     async def do_PBSZ(self, arg):
-        await self.respond("200 PBSZ=0")
+        await self.respond(self.replies["pbsz"])
 
     async def do_PROT(self, arg):
-        await self.respond("200 Protection level set.")
+        await self.respond(self.replies["prot"])
 
     async def do_OPTS(self, arg):
-        await self.respond("200 OK.")
+        await self.respond(self.replies["opts"])
 
     async def do_QUIT(self, arg):
-        await self.respond("221 Bye.")
+        await self.respond(self.replies["quit"])
         self.serve_flag = False
         self.stop()
 

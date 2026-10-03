@@ -44,7 +44,7 @@ debian-12:
     organizational_unit: ""
     common_name: "{hostname}.{domain}"
   capabilities:
-    ftp: { banner: "ProFTPD Server ({hostname}) [::ffff:0.0.0.0]", syst_type: "UNIX Type: L8" }
+    ftp: { banner: "ProFTPD Server (Debian) [{server_ip}]", syst_type: "UNIX Type: L8" }
     telnet: {}
     pop3: { banner: "+OK Dovecot (Debian) ready." }
     imap: { banner: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN] Dovecot (Debian) ready." }
