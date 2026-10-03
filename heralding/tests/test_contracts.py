@@ -222,3 +222,39 @@ async def test_unloadable_starttls_cert_keeps_plain_auth_working(
         hub.stop()
         set_hub(None)
     assert any("AUTH TLS disabled" in r.getMessage() for r in caplog.records)
+
+
+async def test_failing_in_band_certificate_does_not_stop_the_honeypot(tmp_path, monkeypatch):
+    from heralding.capabilities.handlerbase import HandlerBase
+    from heralding.honeypot import Honeypot
+    from heralding.misc import certs
+    from heralding.reporting.memory_sink import MemorySink
+
+    real_ensure = certs.ensure_cert
+
+    def ensure_cert(pem_path, *args, **kwargs):
+        if pem_path in ("smtp.pem", "mssql.pem", "ftp.pem"):
+            raise PermissionError(13, "read-only working directory")
+        return real_ensure(pem_path, *args, **kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("heralding.honeypot.certs.ensure_cert", ensure_cert)
+    config = load_default_config()
+    config["bind_host"] = "127.0.0.1"
+    config["capabilities"] = {
+        name: dict(config["capabilities"][name], port=0) for name in ("smtp", "mssql", "ftp")
+    }
+    hub = ReportingHub()
+    hub.add_sink(MemorySink())
+    hub.start()
+    set_hub(hub)
+    honeypot = Honeypot(config)
+    try:
+        await honeypot.start()
+        assert len(honeypot._servers) == 3
+        assert all(cap.starttls_context is None for cap in honeypot._capabilities)
+    finally:
+        await honeypot.stop()
+        HandlerBase.set_persona(None)
+        hub.stop()
+        set_hub(None)

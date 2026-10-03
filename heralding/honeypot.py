@@ -149,7 +149,10 @@ class Honeypot:
             cap = cls(cap_cfg)
             self._capabilities.append(cap)
             ssl_context = None
-            if cls.TLS == "implicit" or (cls.NEEDS_CERT and cls.TLS != "starttls"):
+            # a certificate used only for an in-band upgrade is built by _attach_starttls,
+            # where a failure disables the upgrade instead of the whole honeypot
+            in_band_only = cls.TLS == "starttls" or getattr(cls, "OFFER_AUTH_TLS", False)
+            if cls.TLS == "implicit" or (cls.NEEDS_CERT and not in_band_only):
                 psd = cap_cfg.get("protocol_specific_data") or {}
                 pem_file = certs.ensure_cert(
                     f"{cap_name}.pem",
