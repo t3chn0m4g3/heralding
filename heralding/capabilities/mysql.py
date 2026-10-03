@@ -30,6 +30,22 @@ CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x00200000
 MAX_PACKET = 0xFFFFFF
 
 AUTH_PLUGIN = b"mysql_native_password"
+SHA2_PLUGIN = b"caching_sha2_password"
+
+
+def server_profile(version: str):
+    """Greeting fields for the advertised version: (version string, capability flags low,
+    high, charset, auth plugin). MariaDB keeps the '5.5.5-' compatibility prefix; MySQL 8
+    defaults to caching_sha2_password and utf8mb4_0900_ai_ci. CLIENT_SSL stays off: there is
+    no TLS here, and clients would otherwise try it first."""
+    if "mariadb" in version.lower():
+        if not version.startswith("5.5.5-"):
+            version = "5.5.5-" + version
+        return version, b"\xfe\xf7", b"\xff\x81", b"\x2d", AUTH_PLUGIN
+    major = version.split(".", 1)[0]
+    if major.isdigit() and int(major) >= 8:
+        return version, b"\xff\xf7", b"\xff\xdf", b"\xff", SHA2_PLUGIN
+    return version, b"\xff\xf7", b"\xff\x81", b"\x21", AUTH_PLUGIN
 
 
 def _int3(num):
@@ -60,19 +76,20 @@ class MySQL(HandlerBase):
     def __init__(self, options):
         super().__init__(options)
         self.PROTO_VER = b"\x0a"
-        self.SERVER_VER = (
-            self.persona_value("version", "5.7.16").encode("ascii", "replace") + b"\x00"
+        version, self.cap_low, self.cap_high, self.charset, self.greeting_plugin = server_profile(
+            str(self.persona_value("version", "5.7.16"))
         )
+        self.SERVER_VER = version.encode("ascii", "replace") + b"\x00"
 
     def server_greeting(self, salt):
         # Server Greeting (HandshakeV10): the 20-byte salt is split 8 + 12
         thread_id = struct.pack("<I", secrets.randbelow(2**31 - 1) + 1)
         salt_1 = salt[:8] + b"\x00"
-        server_cap = b"\xff\xf7"
-        server_lang = b"\x21"
+        server_cap = self.cap_low
+        server_lang = self.charset
         server_status = b"\x02\x00"
-        ext_server_cap = b"\xff\x81"
-        auth_plugin_len = bytes([len(AUTH_PLUGIN) + 1])
+        ext_server_cap = self.cap_high
+        auth_plugin_len = bytes([len(self.greeting_plugin) + 1])
         zeros = bytes(0x0A)
         salt_2 = salt[8:20] + b"\x00"
         payload = (
@@ -87,7 +104,7 @@ class MySQL(HandlerBase):
             + auth_plugin_len
             + zeros
             + salt_2
-            + AUTH_PLUGIN
+            + self.greeting_plugin
             + b"\x00"
         )
         return _int3(len(payload)) + b"\x00" + payload

@@ -73,3 +73,34 @@ async def test_thread_id_differs_between_connections(serve, sink):
 
     ids = {await asyncio.to_thread(thread_id) for _ in range(3)}
     assert len(ids) == 3
+
+
+def _greeting(host, port, password="secret"):
+    """pymysql parses the greeting before the (refused) login."""
+    conn = pymysql.connections.Connection(
+        host=host, port=port, user="root", password=password, connect_timeout=5, defer_connect=True
+    )
+    try:
+        conn.connect()
+    except pymysql.err.OperationalError as exc:
+        assert exc.args[0] == 1045
+    return conn.server_version, conn.server_language
+
+
+async def test_greeting_matches_the_advertised_server(serve, sink):
+    cases = (
+        ("10.11.6-MariaDB-0+deb12u1", ("5.5.5-10.11.6-MariaDB-0+deb12u1", 45)),
+        ("8.0.37-0ubuntu0.24.04.1", ("8.0.37-0ubuntu0.24.04.1", 255)),
+        ("5.7.16", ("5.7.16", 33)),
+    )
+    for count, (version, expected) in enumerate(cases, 1):
+        host, port = await serve(mysql.MySQL(make_options(version=version)))
+        assert await asyncio.to_thread(_greeting, host, port) == expected
+        attempt = (await asyncio.to_thread(sink.wait_for_auth, count))[-1]
+        assert attempt["password_hash"].startswith("$mysqlna$")
+
+
+def test_mysql8_greets_with_caching_sha2():
+    assert mysql.server_profile("8.0.36")[4] == b"caching_sha2_password"
+    assert mysql.server_profile("10.11.6-MariaDB")[4] == b"mysql_native_password"
+    assert mysql.server_profile("5.5.5-10.11.6-MariaDB")[0] == "5.5.5-10.11.6-MariaDB"
