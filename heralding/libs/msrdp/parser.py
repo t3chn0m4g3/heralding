@@ -269,10 +269,14 @@ class ClientInfoPDU:
     def parseTLS(self, raw_data, pos=0):
         pos = tpktPDUParser().parse(raw_data, 0)
         pos = x224DataPDU().parse(raw_data, pos)
-        _, pos = RawBytes(raw_data, None, 6, pos).readRaw()
+        mcs_type, pos = UInt8(raw_data, pos).read()
+        if mcs_type != 0x64:
+            raise InvalidExpectedData("Expected MCS Send Data Request carrying Client Info")
+        _, pos = RawBytes(raw_data, None, 5, pos).readRaw()
         # read length bytes (PER encoded)
-        _infoLen, pos = UInt16Be(raw_data, pos).read()
-        self.infoLen = _infoLen & 0x0FFF
+        self.infoLen, pos = read_per_length(raw_data, pos)
+        if self.infoLen != len(raw_data) - pos:
+            raise InvalidExpectedData("Client info length mismatch")
         # consume flags(2), flagsHi(2), CodePage(4), OptionalFlags(4)
         _, pos = RawBytes(raw_data, None, 12, pos).readRaw()
         #  cbParams(2+2+2+2+2)
@@ -298,3 +302,12 @@ class ClientInfoPDU:
         self.rdpUsername = Username.decode("utf-16-le", "replace").rstrip("\x00")
         self.rdpPassword = Password.decode("utf-16-le", "replace").rstrip("\x00")
         return pos
+
+
+def read_per_length(data, pos):
+    """Read a bounded one- or two-octet RDP PER length determinant."""
+    first, pos = UInt8(data, pos).read()
+    if first & 0x80:
+        second, pos = UInt8(data, pos).read()
+        return ((first & 0x7F) << 8) | second, pos
+    return first, pos

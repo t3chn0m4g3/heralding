@@ -146,6 +146,11 @@ class Honeypot:
                             pem_file, cap.persona_value("tls_min_version", "TLSv1")
                         )
                     cap.tls_context.set_ciphers("DEFAULT:@SECLEVEL=0")
+                    maximum = psd.get("tls_max_version")
+                    if maximum:
+                        from heralding.misc.tls import maximum_version
+
+                        cap.tls_context.maximum_version = maximum_version(maximum)
             if cls.TLS == "starttls" or getattr(cls, "OFFER_AUTH_TLS", False):
                 self._attach_starttls(cap, cap_name, cap_cfg)
             try:

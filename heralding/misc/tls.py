@@ -7,6 +7,14 @@ logger = logging.getLogger(__name__)
 
 
 def minimum_version(value):
+    return _version(value, "tls_min_version")
+
+
+def maximum_version(value):
+    return _version(value, "tls_max_version")
+
+
+def _version(value, setting):
     version = getattr(ssl.TLSVersion, str(value), None)
     if version not in {
         ssl.TLSVersion.TLSv1,
@@ -14,7 +22,7 @@ def minimum_version(value):
         ssl.TLSVersion.TLSv1_2,
         ssl.TLSVersion.TLSv1_3,
     }:
-        logger.warning("Unknown tls_min_version %r; using TLSv1_2", value)
+        logger.warning("Unknown %s %r; using TLSv1_2", setting, value)
         return ssl.TLSVersion.TLSv1_2
     return version
 

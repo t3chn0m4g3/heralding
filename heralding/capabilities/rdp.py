@@ -81,6 +81,7 @@ class RDP(HandlerBase):
             session.end_session()
 
     async def _handle_session(self, reader, writer, session):
+        phase = "x224-negotiation"
         try:
             data = await self.recv_next_tpkt(reader)
             cr_pdu = x224ConnectionRequestPDU()
@@ -96,6 +97,12 @@ class RDP(HandlerBase):
 
             cc_pdu_obj = x224ConnectionConfirmPDU(client_reqProto)
             cc_pdu = cc_pdu_obj.getFullPacket()
+            session.set_auxiliary_data(
+                {
+                    "rdp_selected_protocol": cc_pdu_obj.selected_protocol,
+                    "rdp_security": "nla" if cc_pdu_obj.selected_protocol == 2 else "tls",
+                }
+            )
             await self.send_data(writer, cc_pdu)
             if cc_pdu_obj.sentNegoFail:
                 logger.debug("Sent x224 RDP Negotiation Failure PDU")
@@ -109,19 +116,24 @@ class RDP(HandlerBase):
                 logger.warning("RDP TLS context is not initialized")
                 return
             tls_obj = TLS(writer, reader, context=self.tls_context)
+            phase = "tls-handshake"
             await tls_obj.do_tls_handshake()
+            session.set_auxiliary_data({"tls_version": tls_obj.version})
 
             if cc_pdu_obj.selected_protocol == 2:
+                phase = "credssp-negotiate"
                 await credssp.capture(tls_obj, session, HandlerBase.persona)
                 return
 
             # Now using send_data and recv_next_tpkt
+            phase = "mcs-connect-initial"
             data = await self.recv_next_tpkt(reader, tls_obj)
 
             channel_count = client_channel_count(data)
             mcs_cres = MCSConnectResponsePDU(client_reqProto, channel_count).getFullPacket()
             await self.send_data(writer, mcs_cres, tls_obj)
 
+            phase = "mcs-erect-domain"
             data = await self.recv_next_tpkt(reader, tls_obj)
             if not data:
                 logger.debug("Expected ErectDomainRequest. Got Nothing.")
@@ -133,6 +145,7 @@ class RDP(HandlerBase):
 
             logger.debug("Received: ErectDomainRequest" + repr(data))
 
+            phase = "mcs-attach-user"
             data = await self.recv_next_tpkt(reader, tls_obj)
             if not AttachUserRequestPDU.checkPDU(data):
                 raise InvalidExpectedData("Expected Attach User Request")
@@ -144,6 +157,7 @@ class RDP(HandlerBase):
 
             # Handle multiple Channel Join request PUDs
             for _ in range(channel_count + 3):
+                phase = "mcs-channel-join"
                 # data = await reader.read(2048)
                 data = await self.recv_next_tpkt(reader, tls_obj)
                 if not data:
@@ -166,6 +180,7 @@ class RDP(HandlerBase):
 
             # There is no client security exchange in TLS Security
             client_info = ClientInfoPDU()
+            phase = "client-info"
             client_info.parseTLS(data)
             username = client_info.rdpUsername
             password = client_info.rdpPassword
@@ -182,6 +197,8 @@ class RDP(HandlerBase):
             ValueError,
         ) as exc:
             logger.debug("RDP handshake ended before credential capture: %s", exc)
-            session.set_auxiliary_data({"rdp_handshake_error": str(exc)})
+            session.set_auxiliary_data(
+                {"rdp_handshake_error": str(exc), "rdp_handshake_phase": phase}
+            )
             session.end_session()
             return
