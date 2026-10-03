@@ -91,3 +91,33 @@ async def test_public_key_attempt_is_logged_as_aux_not_auth(ssh_server, sink):
     assert attempts[0]["key_type"] == "ssh-ed25519"
     assert attempts[0]["fingerprint_sha256"] == key.get_fingerprint("sha256")
     assert sink.auth == []  # no auth.csv line for key attempts
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "offered"),
+    [
+        ("ssh-ed25519", True),
+        ("ecdsa-sha2-nistp256", True),
+        ("rsa-sha2-512", True),
+        ("ssh-rsa", False),
+    ],
+)
+async def test_host_keys_match_a_stock_openssh(ssh_server, algorithm, offered):
+    host, port = ssh_server
+    # key exchange passes when the algorithm is offered; then the password is refused
+    expected = asyncssh.PermissionDenied if offered else asyncssh.KeyExchangeFailed
+    with pytest.raises(expected):
+        await asyncssh.connect(
+            host,
+            port,
+            username="u",
+            password="p",
+            known_hosts=None,
+            server_host_key_algs=[algorithm],
+        )
+
+
+async def test_only_openssh_ciphers_are_offered(ssh_server):
+    host, port = ssh_server
+    with pytest.raises(asyncssh.KeyExchangeFailed):
+        await asyncssh.connect(host, port, known_hosts=None, encryption_algs=["aes256-cbc"])

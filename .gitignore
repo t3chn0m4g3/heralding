@@ -38,6 +38,7 @@ beeswarm.cfg
 
 *.log
 /ssh.key
+/ssh_*.key
 #pydev
 .project
 .pydevproject
