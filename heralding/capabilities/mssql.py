@@ -48,8 +48,8 @@ class Mssql(HandlerBase):
     NAME = "mssql"
     NEEDS_CERT = True  # in-band TLS for the login, see module docstring
     OFFER_AUTH_TLS = True
-    # SQL Server's own self-signed certificate carries nothing but this name
-    CERT_SUBJECT = {"common_name": "SSL_Self_Signed_Fallback"}
+    # SQL Server's own self-signed certificate: nothing but this name, valid for 30 years
+    CERT_CONFIG = {"common_name": "SSL_Self_Signed_Fallback", "valid_days": 30 * 365 + 7}
 
     def __init__(self, options):
         super().__init__(options)

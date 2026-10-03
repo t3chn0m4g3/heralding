@@ -286,10 +286,10 @@ class Honeypot:
             )
 
     def _subject_for(self, cls, psd):
-        """A capability may name the subject its real counterpart uses (CERT_SUBJECT); an
+        """A capability may name the certificate its real counterpart uses (CERT_CONFIG); an
         explicit `cert` block in the config still wins."""
-        if psd.get("cert") is None and getattr(cls, "CERT_SUBJECT", None):
-            return dict(cls.CERT_SUBJECT)
+        if psd.get("cert") is None and getattr(cls, "CERT_CONFIG", None):
+            return dict(cls.CERT_CONFIG)
         return self._cert_subject(psd.get("cert"))
 
     def _cert_subject(self, cert_cfg):

@@ -115,6 +115,8 @@ async def test_honeypot_starts_with_explicit_or_legacy_config(tmp_path, monkeypa
 
         mssql_cert = x509.load_pem_x509_certificate((tmp_path / "mssql.pem").read_bytes())
         assert mssql_cert.subject.rfc4514_string() == "CN=SSL_Self_Signed_Fallback"
+        lifetime = mssql_cert.not_valid_after_utc - mssql_cert.not_valid_before_utc
+        assert lifetime.days >= 30 * 365
         mssql_cap = next(c for c in honeypot._capabilities if c.NAME == "mssql")
         assert mssql_cap.starttls_context is not None
         # a second start in the same directory keeps the identity and the certificates
