@@ -15,6 +15,7 @@
 
 import logging
 import os
+import re
 import weakref
 
 import asyncssh
@@ -63,6 +64,24 @@ OPENSSH_MACS = (
     "hmac-sha1",
 )
 OPENSSH_HOST_KEY_ALGS = ("rsa-sha2-512", "rsa-sha2-256", "ecdsa-sha2-nistp256", "ssh-ed25519")
+
+
+def openssh_version(banner: str) -> tuple[int, int]:
+    """(major, minor) of an OpenSSH banner; other banners count as a current OpenSSH."""
+    match = re.search(r"OpenSSH_(?:for_Windows_)?(\d+)\.(\d+)", banner)
+    return (int(match.group(1)), int(match.group(2))) if match else (9, 6)
+
+
+def algorithms_for(banner: str, persona_name: str = ""):
+    """(kex, host key algorithms) the advertised OpenSSH version offers by default: ML-KEM
+    from 9.9 on, ssh-rsa (SHA-1) before 8.8 unless the OS policy removes it (RHEL 9).
+    sntrup761 (9.0-9.8 default) is not available in asyncssh."""
+    version = openssh_version(banner)
+    kex = [alg for alg in OPENSSH_KEX if alg != "mlkem768x25519-sha256" or version >= (9, 9)]
+    host_key_algs = list(OPENSSH_HOST_KEY_ALGS)
+    if version < (8, 8) and not persona_name.startswith("rhel"):
+        host_key_algs.insert(2, "ssh-rsa")
+    return kex, host_key_algs
 
 
 def _available(wanted, supported):
@@ -146,23 +165,25 @@ class SSH(asyncssh.SSHServer, HandlerBase):
 
         for key_file, algorithm in HOST_KEYS:
             self.generate_ssh_key(key_file, algorithm)
+        options = self.options
+        banner = self.persona_value("banner", "SSH-2.0-OpenSSH_9.6")
+        persona = HandlerBase.persona
+        kex, host_key_algs = algorithms_for(banner, persona.name if persona else "")
         host_keys = asyncssh.load_keypairs([key_file for key_file, _ in HOST_KEYS])
         for keypair in host_keys:
-            # OpenSSH 8.8+ offers neither ssh-rsa (SHA-1) nor the ssh.com RSA variants
+            # OpenSSH never offers the ssh.com RSA variants
             keypair.host_key_algorithms = [
                 alg
-                for name in OPENSSH_HOST_KEY_ALGS
+                for name in host_key_algs
                 for alg in keypair.host_key_algorithms
                 if alg.decode() == name
             ]
-        options = self.options
-        banner = self.persona_value("banner", "SSH-2.0-OpenSSH_9.6")
         return await asyncssh.create_server(
             lambda: type(self)(options),
             bind_host,
             port,
             server_host_keys=host_keys,
-            kex_algs=_available(OPENSSH_KEX, get_kex_algs()),
+            kex_algs=_available(kex, get_kex_algs()),
             encryption_algs=_available(OPENSSH_CIPHERS, get_encryption_algs()),
             mac_algs=_available(OPENSSH_MACS, get_mac_algs()),
             compression_algs=["none", "zlib@openssh.com"],

@@ -121,3 +121,35 @@ async def test_only_openssh_ciphers_are_offered(ssh_server):
     host, port = ssh_server
     with pytest.raises(asyncssh.KeyExchangeFailed):
         await asyncssh.connect(host, port, known_hosts=None, encryption_algs=["aes256-cbc"])
+
+
+def test_algorithms_follow_the_banner_version():
+    kex, host_keys = ssh.algorithms_for("SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.5")
+    assert "mlkem768x25519-sha256" not in kex and "ssh-rsa" not in host_keys
+    kex, _ = ssh.algorithms_for("SSH-2.0-OpenSSH_9.9")
+    assert kex[0] == "mlkem768x25519-sha256"
+    _, host_keys = ssh.algorithms_for("SSH-2.0-OpenSSH_for_Windows_8.1")
+    assert "ssh-rsa" in host_keys
+    _, host_keys = ssh.algorithms_for("SSH-2.0-OpenSSH_8.7", "rhel-9")
+    assert "ssh-rsa" not in host_keys  # RHEL 9 crypto policy disables SHA-1 signatures
+
+
+async def test_windows_openssh_8_1_offers_ssh_rsa(sink, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cap = ssh.SSH(make_options(banner="SSH-2.0-OpenSSH_for_Windows_8.1"))
+    server = await cap.create_server("127.0.0.1", 0)
+    host, port = server.sockets[0].getsockname()[:2]
+    try:
+        with pytest.raises(asyncssh.PermissionDenied):  # key exchange passed with ssh-rsa
+            await asyncssh.connect(
+                host, port, username="u", password="p", known_hosts=None,
+                server_host_key_algs=["ssh-rsa"],
+            )  # fmt: skip
+        with pytest.raises(asyncssh.KeyExchangeFailed):  # no ML-KEM before 9.9
+            await asyncssh.connect(
+                host, port, username="u", password="p", known_hosts=None,
+                kex_algs=["mlkem768x25519-sha256"],
+            )  # fmt: skip
+    finally:
+        server.close()
+        await server.wait_closed()
