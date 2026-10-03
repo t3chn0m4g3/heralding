@@ -13,7 +13,9 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
 - Personas: coherent banners, versions, host names and certificate subjects; explicit config
   values win.
 - Certificates with `cryptography` (SHA-256, random serial, mode 0600).
-- RDP works again with TLS 1.0 to 1.3.
+- RDP supports TLS 1.0 to 1.3, with a default maximum of TLS 1.2 and an explicit TLS 1.3 override.
+- RDP allocates a user channel after the static channels and handles both PER length forms;
+  Windows App 11.4.1 on macOS was verified to log credentials through its TLS-only fallback.
 - RDP NLA/CredSSP captures NTLM challenge responses and explicitly refuses authentication;
   generic TLS-only clients retain plaintext credential capture.
 - IPv6 listeners, auxiliary data with client command lines and SSH public-key attempts.

@@ -135,8 +135,17 @@ The domain, workstation, TLS version and selected security mode are session meta
 NLA attempts receive `STATUS_LOGON_FAILURE` after capture; Heralding never opens a desktop.
 Kerberos-only and Remote Credential Guard authentication are unsupported.
 
-Optional `protocol_specific_data.tls_max_version` limits the RDP TLS version, for example
-`TLSv1_2` for a client compatibility check. No maximum is selected by default.
+RDP defaults to a TLS 1.2 maximum for client compatibility. Set
+`protocol_specific_data.tls_max_version: TLSv1_3` to allow TLS 1.3 explicitly.
+An explicit minimum of TLS 1.3 also raises the default maximum to TLS 1.3.
+The startup log reports the effective range. Other protocols keep their own TLS settings.
+
+The MCS user channel is allocated after the client's static channels to avoid overlapping
+IDs. Session metadata records the channel count, user channel and joined channels.
+Windows App 11.4.1 (3092) on macOS was confirmed to capture plaintext credentials through
+its TLS-only fallback. Its initial NLA connection ended before sending authentication data;
+this does not establish NLA compatibility for that app. Error 0x204 can remain after capture
+because Heralding ends the connection without establishing a desktop.
 
 Self-signed certificate warnings are expected. If a client disconnects before sending
 credentials, its session can contain `rdp_requested_protocols` and `rdp_handshake_error`;

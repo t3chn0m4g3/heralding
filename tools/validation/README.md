@@ -9,7 +9,7 @@ no host ports are published.
 Run from the Heralding checkout:
 
 ```sh
-docker build -t heralding:2.0-dev .
+docker build -t heralding:generic-dev .
 docker build -t heralding:validation-tools tools/validation
 docker build -f tools/validation/Dockerfile.tests -t heralding:linux-tests tools/validation
 docker run --rm -v "$PWD:/src:ro" heralding:linux-tests
@@ -30,7 +30,7 @@ docker network create --internal heralding-audit
 docker run -d --name heralding-audit-server --network heralding-audit \
   --read-only --tmpfs /tmp/heralding:uid=2000,gid=2000 \
   -v "$audit_dir/config.yml:/etc/heralding/heralding.yml:ro" \
-  -v "$audit_dir/log:/var/log/heralding" heralding:2.0-dev
+  -v "$audit_dir/log:/var/log/heralding" heralding:generic-dev
 ```
 
 ## Standard clients
@@ -63,7 +63,9 @@ For TLS 1.0, start a second server with the same mounts plus
 `python /probes/tls10_server.py -c /etc/heralding/heralding.yml -l /var/log/heralding/tls10.log`.
 This fixture sets only the RDP context's maximum to TLS 1.0. Run FreeRDP against that
 container with `/tls-seclevel:0`. Verify `auxiliary_data.tls_version` in the session log.
-The first server defaults to TLS 1.3 with this client. Removing its `rdp.pem` after startup
+The first server defaults to a TLS 1.2 maximum. To check TLS 1.3, explicitly set
+`capabilities.rdp.protocol_specific_data.tls_max_version: TLSv1_3` and recreate the test server.
+Removing its `rdp.pem` after startup
 and repeating FreeRDP verifies that the loaded context survives file removal.
 
 ## Credential material
