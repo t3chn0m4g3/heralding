@@ -25,6 +25,16 @@ Requires Python 3.14. See README.md for installation, protocol limits and valida
 - Completion fixes: bounded BER nesting and UDP lifecycles, buffered STARTTLS plaintext
   discarded, startup TLS contexts, certificate regeneration on configuration edits,
   RDP channel negotiation, persistent SIP TCP and corrected Hashcat SIP export.
+- Review fixes: UDP pseudo-sessions have their own pool, the per-source limit counts an IPv6 /64
+  as one source, and SIP over UDP only logs credentials whose nonce was sent to that source.
+  `bind_host` defaults to IPv4 and IPv6 and skips `::` on hosts without IPv6.
+- Credential capture: IMAP AUTHENTICATE LOGIN and ID, IMAP literals of mixed kinds, POP3 CAPA and
+  AUTH PLAIN; the VNC hash is logged even when cracking is busy or the session times out.
+- Fingerprints: Windows-like NTLM challenges (NetBIOS domain, version, timestamp), HTTP/1.1 with
+  Apache, nginx or IIS pages, MySQL/MariaDB greetings per version, ProFTPD/vsftpd/IIS FTP and
+  Postfix/Exchange SMTP wording, STARTTLS on port 25, POP3 CRLF, LDAP rootDSE per server, OpenSSH
+  host keys and algorithm lists, SMB 3.0/3.0.2.
+- Telnet records the client's terminal type, environment variables and window size.
 - Standard clients across the suite; optional sinks and privilege changes tested.
   The actual hpfeeds3 client uses bounded socket I/O and a single connection attempt;
   library authentication and publishing are checked against a local test broker.
