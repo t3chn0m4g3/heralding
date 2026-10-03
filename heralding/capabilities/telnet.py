@@ -76,5 +76,8 @@ class TelnetWrapper(TelnetHandlerBase):
         await self.writeline(b"Username: ")  # It fixes a problem with Hydra bruteforcer.
         return False
 
+    def client_option(self, name, value):
+        self.session.set_auxiliary_data({name: value})
+
     def session_end(self):
         self.session.end_session()

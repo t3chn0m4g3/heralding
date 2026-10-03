@@ -151,3 +151,30 @@ async def test_disconnect_at_password_prompt_ends_session(serve, sink):
             break
         await asyncio.sleep(0.05)
     assert HandlerBase.global_sessions == 0
+
+
+async def test_terminal_type_environment_and_window_size_are_recorded(serve, sink):
+    cap = telnet.Telnet(make_options(max_attempts=1))
+    host, port = await serve(cap)
+    reader, writer = await telnetlib3.open_connection(
+        host,
+        port,
+        encoding=False,
+        term="xterm-256color",
+        cols=132,
+        rows=43,
+        connect_minwait=0.2,
+        connect_maxwait=1.0,
+    )
+    await _read_until(reader, writer, b"Username: ")
+    writer.write(b"root\r\n")
+    await writer.drain()
+    await _read_until(reader, writer, b"Password: ")
+    writer.write(b"toor\r\n")
+    await writer.drain()
+    ended = (await asyncio.to_thread(sink.wait_for_session_end, 1))[0]
+    writer.close()
+    aux = ended["auxiliary_data"]
+    assert aux["terminal_type"].lower() == "xterm-256color"
+    assert aux["window_size"] == "132x43"
+    assert aux["environment"].get("TERM", "").lower() == "xterm-256color"

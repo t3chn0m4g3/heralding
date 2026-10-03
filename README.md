@@ -68,7 +68,8 @@ Heralding writes three files: `log_session.json`, `log_auth.csv` and `log_sessio
 All available information for a session, written as JSON Lines **after** the session has ended:
 timestamps, authentication attempts and protocol specific details in `auxiliary_data`. Examples of
 auxiliary data are the client's command lines for ftp, imap, pop3 and telnet (`commands`, at most 50,
-`commands_truncated` when cut), SSH client versions and offered public keys
+`commands_truncated` when cut), the telnet client's terminal type, environment variables and window
+size (`terminal_type`, `environment`, `window_size`), SSH client versions and offered public keys
 (`publickey_attempts`), HTTP request headers, SOCKS5 auth methods, MQTT client ids and the RDP
 domain.
 

@@ -52,6 +52,38 @@ NOOPT = bytes([0])
 
 IS = bytes([0])
 SEND = bytes([1])
+INFO = bytes([2])
+
+MAX_ENV_VARS = 16
+MAX_ENV_TEXT = 64
+
+
+def parse_environ(data: bytes) -> dict:
+    """NEW-ENVIRON IS/INFO payload (RFC 1572) -> {name: value}, bounded."""
+    found = {}
+    name = value = None
+    current = None
+    i = 0
+    while i <= len(data):
+        byte = data[i] if i < len(data) else None
+        if byte in (0, 3, None):  # VAR, USERVAR or end: the previous pair is complete
+            if name is not None and len(found) < MAX_ENV_VARS:
+                key = name.decode("utf-8", "replace")[:MAX_ENV_TEXT]
+                found[key] = (value or b"").decode("utf-8", "replace")[:MAX_ENV_TEXT]
+            name, value, current = bytearray(), None, "name"
+            if byte is None:
+                break
+        elif byte == 1:  # VALUE
+            value, current = bytearray(), "value"
+        else:
+            if byte == 2 and i + 1 < len(data):  # ESC: next byte is literal
+                i += 1
+                byte = data[i]
+            target = name if current == "name" else value
+            if target is not None:
+                target.append(byte)
+        i += 1
+    return {k: v for k, v in found.items() if k}
 
 
 def unctrl(c):
@@ -80,11 +112,13 @@ class TelnetHandlerBase(AsyncBaseRequestHandler):
     WILLACK = {
         ECHO: DONT,
         SGA: DO,
-        NAWS: DONT,
+        NAWS: DO,
         TTYPE: DO,
         LINEMODE: DONT,
         NEW_ENVIRON: DO,
     }
+    # Options whose content is asked for once the client agrees (WILL)
+    SEND_REQUESTS = {TTYPE, NEW_ENVIRON}
     # Terminal output escape sequences (plain ANSI; no terminfo lookup)
     CODES = {
         "DEOL": b"\x1b[K",  # Delete to end of line
@@ -134,7 +168,27 @@ class TelnetHandlerBase(AsyncBaseRequestHandler):
     def session_end(self):
         pass
 
+    def client_option(self, name, value):
+        """Called with what the client told about itself (terminal type, environment,
+        window size). Override to record it."""
+
     # ------------------------- Telnet Options Engine --------------------------
+
+    def _option_received(self, cmd, opt):
+        if cmd == WILL and opt in self.SEND_REQUESTS:
+            self.writer.write(IAC + SB + opt + SEND + IAC + SE)
+
+    def _subnegotiation_received(self, data):
+        option, kind, payload = data[:1], data[1:2], data[2:]
+        if option == TTYPE and kind == IS:
+            self.client_option("terminal_type", payload.decode("ascii", "replace")[:MAX_ENV_TEXT])
+        elif option == NEW_ENVIRON and kind in (IS, INFO):
+            environ = parse_environ(payload)
+            if environ:
+                self.client_option("environment", environ)
+        elif option == NAWS and len(data) >= 5:
+            width, height = int.from_bytes(data[1:3], "big"), int.from_bytes(data[3:5], "big")
+            self.client_option("window_size", f"{width}x{height}")
 
     def sendcommand(self, cmd, opt=None):
         """Send a telnet command (IAC). Only used during setup; flushed by the first drain."""
@@ -422,8 +476,9 @@ class TelnetHandlerBase(AsyncBaseRequestHandler):
                             self.sbdataq = b""
                         elif cb == SE:  # SB ... SE end.
                             self.sb = 0
-                        # Callback is supposed to look into the sbdataq
+                            self._subnegotiation_received(self.sbdataq)
                 elif len(self.iacseq) == 2:
+                    self._option_received(self.iacseq[1:2], cb)
                     self.iacseq = b""
         except EOFError:
             pass
