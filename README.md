@@ -155,6 +155,49 @@ CredSSP framing and failure responses follow Microsoft's
 
 ## Docker
 
+### Docker Compose
+
+From this checkout, start the standalone deployment with Docker Compose:
+
+```shell
+docker compose up --build -d
+docker compose logs -f heralding
+docker compose exec heralding tail -f /var/log/heralding/log_auth.csv
+```
+
+[compose.yaml](compose.yaml) builds the local Dockerfile and publishes all 27 capabilities,
+including SIP over TCP and UDP. The service runs as the image's non-root user with a
+read-only root filesystem. Docker-managed volumes keep logs, certificates, the SSH host
+key and `persona.state` across container recreation; host directories and ownership
+changes are not needed. `docker compose down` retains these volumes; `down -v` deletes them.
+
+Host ports below 1024 are mapped to higher ports by default, including FTP 2121, SSH 2222,
+HTTP 8080 and HTTPS 8443. RDP uses 3389. See the Compose file for every mapping.
+If a port is occupied, set the corresponding `HERALDING_<PROTOCOL>_PORT` variable:
+
+```shell
+HERALDING_SSH_PORT=2223 HERALDING_RDP_PORT=13389 docker compose up --build -d
+```
+
+Variables can also go in a local `.env` file, which Git ignores. `HERALDING_BIND_ADDRESS`
+defaults to `0.0.0.0`; set it to `127.0.0.1` for local access. Ports can be mapped back to
+their standard values on a dedicated host, for example `HERALDING_SSH_PORT=22`.
+The image's default configuration is used. To customize capabilities, copy it with
+`docker compose cp heralding:/etc/heralding/heralding.yml ./heralding.local.yml`, edit it,
+then create an ignored `compose.override.yaml`:
+
+```yaml
+services:
+  heralding:
+    volumes:
+      - ./heralding.local.yml:/etc/heralding/heralding.yml:ro
+```
+
+Keep file logging paths under `/var/log/heralding` in the custom configuration and run
+`docker compose up -d` to apply it. Compose uses the override file automatically.
+
+### Docker CLI
+
 ```shell
 docker build -t heralding .
 mkdir -p log

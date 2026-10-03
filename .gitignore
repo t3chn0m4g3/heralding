@@ -67,3 +67,8 @@ htmlcov/
 
 # Local planning and validation documents
 /docs/
+
+# Local standalone deployment configuration
+/.env
+/compose.override.yaml
+/heralding.local.yml
