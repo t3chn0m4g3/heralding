@@ -111,6 +111,9 @@ class Ldap(HandlerBase):
                         password=decode_lossless(parts[2]),
                     )
                     return INVALID_CREDENTIALS
+            # an advertised mechanism must not be "unsupported"; the bind just fails
+            if mechanism.upper() in self._rootdse()["supportedSASLMechanisms"]:
+                return INVALID_CREDENTIALS
             return AUTH_METHOD_NOT_SUPPORTED
         return AUTH_METHOD_NOT_SUPPORTED
 
@@ -141,18 +144,25 @@ class Ldap(HandlerBase):
 
     def _rootdse(self):
         naming = self.persona_value("naming_context", "dc=example,dc=com")
+        vendor = self.persona_value("vendor_name", "OpenLDAP")
         attrs = {
             "objectClass": ["top", "OpenLDAProotDSE"],
-            "vendorName": [self.persona_value("vendor_name", "OpenLDAP")],
-            "vendorVersion": [self.persona_value("vendor_version", "2.6.7")],
             "namingContexts": [naming],
-            "defaultNamingContext": [naming],
             "supportedLDAPVersion": ["3"],
             "supportedSASLMechanisms": ["PLAIN", "DIGEST-MD5", "GSSAPI"],
             "supportedControl": ["1.2.840.113556.1.4.319"],
         }
+        if vendor != "OpenLDAP":  # OpenLDAP publishes neither vendor attributes nor a default
+            attrs["objectClass"] = ["top"]
+            attrs["vendorName"] = [vendor]
+            attrs["vendorVersion"] = [self.persona_value("vendor_version", "")]
+            attrs["defaultNamingContext"] = [naming]
         persona = HandlerBase.persona
         if persona is not None and persona.os_family == "windows":
+            # Active Directory has no vendor attributes either
+            attrs.pop("vendorName", None)
+            attrs.pop("vendorVersion", None)
+            attrs["defaultNamingContext"] = [naming]
             attrs["objectClass"] = ["top"]
             attrs["supportedCapabilities"] = ["1.2.840.113556.1.4.800"]
             attrs["dnsHostName"] = [persona.fqdn]

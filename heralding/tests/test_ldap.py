@@ -60,7 +60,7 @@ async def test_anonymous_rootdse_search_shows_persona(serve, sink, windows_perso
         return conn.entries[0].entry_attributes_as_dict if conn.entries else {}
 
     attrs = await asyncio.to_thread(run)
-    assert attrs["vendorName"] == [windows_persona.get("ldap", "vendor_name")]
+    assert not attrs.get("vendorName") and not attrs.get("vendorVersion")  # AD has neither
     assert attrs["namingContexts"] == [windows_persona.get("ldap", "naming_context")]
     assert "3" in attrs["supportedLDAPVersion"]
     assert attrs["objectClass"] == ["top"]
@@ -142,3 +142,35 @@ async def test_attempts_per_connection_are_capped(serve, sink):
     await asyncio.sleep(0.2)
     first_session = sink.auth[0]["session_id"]
     assert sum(1 for a in sink.auth if a["session_id"] == first_session) == 3
+
+
+async def test_advertised_sasl_mechanism_fails_as_invalid_credentials(serve, sink):
+    host, port = await serve(ldap.Ldap(make_options()))
+
+    def run():
+        conn = ldap3.Connection(
+            _server(host, port),
+            authentication=ldap3.SASL,
+            sasl_mechanism=ldap3.DIGEST_MD5,
+            sasl_credentials=(None, "alice", "pw", None),
+            receive_timeout=5,
+        )
+        conn.open()
+        conn.bind()
+        return conn.result["result"]
+
+    assert await asyncio.to_thread(run) == 49  # invalidCredentials, not authMethodNotSupported
+
+
+async def test_openldap_rootdse_has_no_vendor_attributes(serve, sink):
+    host, port = await serve(ldap.Ldap(make_options(vendor_name="OpenLDAP")))
+
+    def run():
+        conn = ldap3.Connection(_server(host, port), receive_timeout=5)
+        conn.bind()
+        conn.search("", "(objectClass=*)", search_scope=ldap3.BASE, attributes=["*", "+"])
+        return conn.entries[0].entry_attributes_as_dict
+
+    attrs = await asyncio.to_thread(run)
+    assert "OpenLDAProotDSE" in attrs["objectClass"]
+    assert not attrs.get("vendorName") and not attrs.get("defaultNamingContext")
