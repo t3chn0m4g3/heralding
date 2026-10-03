@@ -155,6 +155,8 @@ def test_nonce_expires(monkeypatch):
     assert len(nonce) == 32 and cap._nonce_valid(nonce, "192.0.2.1")
     assert not cap._nonce_valid(nonce, "192.0.2.2")
     assert not cap._nonce_valid("zz" + nonce[2:], "192.0.2.1")
+    assert not cap._nonce_valid(nonce[:8] + "ü" * 24, "192.0.2.1")  # no TypeError
+    assert not cap._nonce_valid("0x" + nonce[2:], "192.0.2.1")
     later = sip.time.time() + sip.NONCE_LIFETIME + 5
     monkeypatch.setattr(sip.time, "time", lambda: later)
     assert not cap._nonce_valid(nonce, "192.0.2.1")

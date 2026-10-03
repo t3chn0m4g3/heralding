@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 MAX_MESSAGE = 8192
 NONCE_LIFETIME = 3600  # seconds a challenge nonce is accepted for
+_HEX = set("0123456789abcdef")
 _REQUEST_LINE = re.compile(r"^([A-Z]+) (\S+) SIP/2\.0$")
 _PARAM = re.compile(r'(\w+)=("([^"]*)"|([^,\s]*))')
 COPIED_HEADERS = ("via", "from", "to", "call-id", "cseq")
@@ -77,11 +78,11 @@ class Sip(DatagramHandlerBase):
         return stamp + mac.hexdigest()[:24]
 
     def _nonce_valid(self, nonce, source_ip):
-        try:
-            issued = int(nonce[:8], 16)
-        except ValueError:
+        # exactly our format: 32 lower-case hex digits (compare_digest needs ASCII)
+        if len(nonce) != 32 or not set(nonce) <= _HEX:
             return False
-        if len(nonce) != 32 or not 0 <= time.time() - issued <= NONCE_LIFETIME:
+        issued = int(nonce[:8], 16)
+        if not 0 <= time.time() - issued <= NONCE_LIFETIME:
             return False
         return hmac.compare_digest(nonce, self._nonce(source_ip, issued))
 
