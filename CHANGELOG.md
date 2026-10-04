@@ -1,57 +1,54 @@
 # Changelog
 
-## 2.0.0 (unreleased)
+## 2.0.0 (pre-release)
 
-Requires Python 3.14. See README.md for installation, protocol limits and validation commands.
+Requires Python 3.14. Installation and configuration: see README.md.
 
-- Packaging with `pyproject.toml` and uv; `setup.py`, `requirements*.txt` and Travis removed.
-- Runs on Python 3.14 (`asyncio.run`, aware UTC timestamps, no removed stdlib APIs).
-- New reporting pipeline: one thread per sink, bounded queues, never blocks the event loop.
-  hpfeeds and curiosum are optional extras.
-- Hardening: session limits (global and per IP), read limits, no tracebacks in the log for
-  client errors, bounded telnet input, prompt shutdown with connected clients.
-- Personas: coherent banners, versions, host names and certificate subjects; explicit config
-  values win.
+### Breaking changes
+
+- Python 3.14 only. Packaging with `pyproject.toml` and uv; `setup.py` and `requirements*.txt`
+  are gone.
+- `bind_host` defaults to `["0.0.0.0", "::"]`; `::` is skipped on hosts without IPv6.
+- MySQL: `password` is empty, the challenge response is in `password_hash` (hashcat 11200).
+- VNC: `password_hash` is a string.
+- SOCKS5: the authentication reply uses version 0x01 (RFC 1929).
+- SMTP on port 25 offers STARTTLS and creates `smtp.pem`.
+
+### New services
+
+redis, mqtt, mqtts, http_proxy, submission, ftps (and AUTH TLS on ftp), ldap, ldaps, mssql,
+sip (UDP and TCP), smb. RDP is enabled again, with TLS 1.0 to 1.3 and NLA.
+
+### Credential capture
+
+- NTLMv1/v2 responses from SMB, RDP NLA and LDAP (Sicily and GSS-SPNEGO, Windows personas).
+- MSSQL logins also from clients that require encryption.
+- IMAP AUTHENTICATE LOGIN, POP3 AUTH PLAIN, SMTP after STARTTLS.
+- Hashes in hashcat/John formats for MySQL, VNC, CRAM-MD5, SIP and NTLM.
+- Auxiliary data: client commands, SSH public keys, telnet terminal type, environment and
+  window size.
+
+### Personas
+
+- Profiles for Ubuntu 24.04, Debian 12, RHEL 9, Windows Server 2019 and 2022: banners, versions,
+  host names and certificates, kept across restarts. Explicit config values win.
+- Replies follow the persona's server: HTTP, FTP, SMTP, POP3, IMAP, MySQL, LDAP, NTLM, SMB up to
+  3.1.1, SSH algorithms per OpenSSH version.
+
+### Robustness
+
+- Session limits globally and per source (IPv6 per /64), a separate pool for UDP, read limits,
+  no tracebacks in the log for client errors.
+- SIP over UDP logs credentials only from sources that received the challenge.
+- Reporting with one thread and a bounded queue per sink; hpfeeds and curiosum are optional
+  extras.
 - Certificates with `cryptography` (SHA-256, random serial, mode 0600).
-- RDP supports TLS 1.0 to 1.3, with a default maximum of TLS 1.2 and an explicit TLS 1.3 override.
-- RDP allocates a user channel after the static channels and handles both PER length forms;
-  Windows App 11.4.1 on macOS was verified to log credentials through its TLS-only fallback.
-- RDP NLA/CredSSP captures NTLM challenge responses and explicitly refuses authentication;
-  generic TLS-only clients retain plaintext credential capture.
-- IPv6 listeners, auxiliary data with client command lines and SSH public-key attempts.
-- New services: redis, mqtt, mqtts, http_proxy, submission (STARTTLS), ftps and AUTH TLS on ftp,
-  ldap, ldaps, mssql, sip (UDP and TCP), smb (SMB2 with NTLMv1/v2).
-- Docker image on pinned `python:3.14-alpine`, non-root, read-only root filesystem.
-- Completion fixes: bounded BER nesting and UDP lifecycles, buffered STARTTLS plaintext
-  discarded, startup TLS contexts, certificate regeneration on configuration edits,
-  RDP channel negotiation, persistent SIP TCP and corrected Hashcat SIP export.
-- Review fixes: UDP pseudo-sessions have their own pool, the per-source limit counts an IPv6 /64
-  as one source, and SIP over UDP only logs credentials whose nonce was sent to that source.
-  `bind_host` defaults to IPv4 and IPv6 and skips `::` on hosts without IPv6.
-- Credential capture: IMAP AUTHENTICATE LOGIN and ID, IMAP literals of mixed kinds, POP3 CAPA and
-  AUTH PLAIN; the VNC hash is logged even when cracking is busy or the session times out.
-- Fingerprints: Windows-like NTLM challenges (NetBIOS domain, version, timestamp), HTTP/1.1 with
-  Apache, nginx or IIS pages, MySQL/MariaDB greetings per version, ProFTPD/vsftpd/IIS FTP and
-  Postfix/Exchange SMTP wording, STARTTLS on port 25, POP3 CRLF, LDAP rootDSE per server, OpenSSH
-  host keys and algorithm lists, SMB 3.0, 3.0.2 and 3.1.1 (preauth integrity and cipher contexts).
-- Second review: a failing STARTTLS certificate no longer stops the start, resource errors stay
-  visible in the event loop handler, strict SIP nonce format, telnet asks for client values once,
-  NTLM grants requested signing/key exchange, SMB answers the Server 2022 signing context and
-  refuses bad contexts, SSH algorithms follow the banner version, 30-year MSSQL certificate.
-- LDAP with a Windows persona captures NTLM binds over Sicily and SASL GSS-SPNEGO like Active
-  Directory, with AD's failure message.
-- Telnet records the client's terminal type, environment variables and window size.
-- MSSQL answers the client's encryption wish like SQL Server (login-only or full TLS inside TDS,
-  certificate `CN=SSL_Self_Signed_Fallback`), so clients that require encryption, such as ODBC
-  Driver 18, also send their login.
-- Standard clients across the suite; optional sinks and privilege changes tested.
-  The actual hpfeeds3 client uses bounded socket I/O and a single connection attempt;
-  library authentication and publishing are checked against a local test broker.
-- T-Pot integration adds only free ports and accepts both SOCKS5 reply versions.
-- Downstream T-Pot fixtures, integration probes and build scripts live in T-Pot's repository;
-  standalone Docker logging retains Heralding's generic filenames.
-- Behaviour changes: SOCKS5 replies follow RFC 1929; MySQL logins have an empty `password` and the
-  challenge material in `password_hash`; VNC `password_hash` is a string.
+- Docker image on `python:3.14-alpine`, non-root, read-only root filesystem; standalone
+  `docker-compose.yml`.
+
+### Upstream issues addressed
+
+#26, #49, #71, #80, #89 (partly), #96, #97, #98, #99, #151, #152, #162, #163; PRs #159 and #161.
 
 ## 1.0.7 (2020-12-27)
 
