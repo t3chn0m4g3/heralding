@@ -8,7 +8,7 @@
 * [Step 6: Start the honeypot](#step-6-start-the-honeypot)
 * [Step 7: Run Heralding as a service (optional)](#step-7-run-heralding-as-a-service-optional)
 
-This guide is a more comprehensive version of the [README](https://github.com/johnnykv/heralding/blob/master/README.rst) geared towards installing Heralding on Ubuntu 16.04 in a Python virtual environment.
+This guide is a more comprehensive version of the [README](https://github.com/telekom-security/heralding/blob/master/README.md) geared towards installing Heralding on Ubuntu 16.04 in a Python virtual environment.
 
 ## Step 1: Install dependencies
 First, we install support for Python virtual environments and other dependencies. The actual Python packages are installed later.
@@ -20,7 +20,7 @@ $ sudo apt-get install python3-pip python3-dev python3-venv build-essential libs
 This example puts things in the `user`'s home directory:
 ```
 $ cd ~
-$ git clone https://github.com/johnnykv/heralding.git
+$ git clone https://github.com/telekom-security/heralding.git
 Cloning into 'heralding'...
 remote: Counting objects: 10199, done.
 remote: Total 10199 (delta 0), reused 0 (delta 0), pack-reused 10199
@@ -114,7 +114,7 @@ Instead of running heralding interactively or in the background, you can run it 
 ```
 [Unit]
 Description=heralding
-Documentation=https://github.com/johnnykv/heralding
+Documentation=https://github.com/telekom-security/heralding
 After=network.target
 
 [Service]

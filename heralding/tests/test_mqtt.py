@@ -23,8 +23,10 @@ def _connect(host, port, username, password, protocol, tls=False, timeout=10):
     if username is not None:
         client.username_pw_set(username, password)
     if tls:
-        client.tls_set(cert_reqs=ssl.CERT_NONE)  # honeypot cert is self-signed
-        client.tls_insecure_set(True)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        client.tls_set_context(context)
     client.connect(host, port, keepalive=5)
     client.loop_start()
     try:

@@ -16,7 +16,7 @@ T-Pot deployment configuration and integration tests are maintained in the T-Pot
 ## Installing
 
 ```shell
-git clone https://github.com/johnnykv/heralding
+git clone https://github.com/telekom-security/heralding
 cd heralding
 uv sync                       # add --extra hpfeeds / --extra curiosum as needed
 mkdir tmp && cd tmp

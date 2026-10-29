@@ -22,7 +22,7 @@ curiosum = ["pyzmq>=27"]
 heralding = "heralding.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/johnnykv/heralding"
+Homepage = "https://github.com/telekom-security/heralding"
 
 [dependency-groups]
 dev = [
@@ -46,6 +46,7 @@ dev = [
     "pyspnego>=0.12",  # standard CredSSP/NTLM client for RDP NLA regression tests
     "pyopenssl>=25",
     "service-identity>=24",
+    "twisted>=26.10.0rc2",
 ]
 
 [build-system]
